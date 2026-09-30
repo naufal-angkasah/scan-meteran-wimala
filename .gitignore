@@ -15,6 +15,7 @@ dist-ssr
 serviceAccountKey.json
 functions/lib
 functions/node_modules
+*.traineddata
 
 # Editor directories and files
 .vscode/*

@@ -1,14 +1,66 @@
+export type StatusRumah = 'terhuni' | 'dibangun' | 'renovasi' | 'booking' | 'kosong';
+
+export interface Customer {
+  id: string;
+  namaPemilik: string;
+  blok: string;
+  nomorMeteran: string;
+  angkaAwal: number;
+  statusRumah?: StatusRumah;
+  createdAt?: any;
+}
+
+export interface Tariff {
+  id: string;
+  minM3: number;
+  maxM3: number;
+  hargaPerM3: number;
+  deskripsi?: string;
+}
+
+export type ReadingStatus = 'normal' | 'perlu_cek' | 'valid';
+
+export interface ReadingRecord {
+  id: string; // customerId_periode
+  customerId: string;
+  blok: string;
+  namaPemilik: string;
+  nomorMeteran: string;
+  periode: string; // YYYY-MM
+  angkaSebelumnya: number;
+  angkaSekarang: number;
+  pemakaianM3: number;
+  totalBiaya: number;
+  fotoUrl: string;
+  ocrConfidence: number;
+  status: ReadingStatus;
+  catatanAnomali?: string | null;
+  dicatatOleh: string;
+  dicatatOlehUid?: string;
+  createdAt?: any;
+  updatedAt?: any;
+}
+
+export interface OcrResult {
+  angka: number | null;
+  confidence: number;
+  catatan?: string;
+}
+
+// -------------------------------------------------------------
+// Legacy & Compatibility Types
+// -------------------------------------------------------------
 export type ClusterName = 'Kamala' | 'Lily' | 'Bougenvile';
 
 export interface UnitKavling {
   no: number;
   cluster: ClusterName;
-  blok: string; // e.g. 'D-01', 'A-21'
+  blok: string;
   nama: string;
   tipe: string;
   status: 'Terhuni' | 'Booking';
-  standAwal: number; // m3 bulan lalu
-  nomorMeteran?: string; // no seri meter fisik
+  standAwal: number;
+  nomorMeteran?: string;
 }
 
 export type KondisiMeter = 
@@ -25,25 +77,25 @@ export interface MeterReading {
   blok: string;
   cluster: ClusterName;
   namaKonsumen: string;
-  periode: string; // e.g. 'September 2026'
-  standAwal: number; // m3
-  standAkhir: number; // m3
-  pemakaian: number; // standAkhir - standAwal (m3)
-  estimasiBiayaAir: number; // Rp
+  periode: string;
+  standAwal: number;
+  standAkhir: number;
+  pemakaian: number;
+  estimasiBiayaAir: number;
   kondisiMeter: KondisiMeter;
-  fotoBukti?: string; // Data URL base64 atau path
+  fotoBukti?: string;
   catatanPetugas?: string;
   petugas: string;
-  timestamp: string; // ISO date string
+  timestamp: string;
   isAnomaly: boolean;
   anomalyReason?: string;
 }
 
 export interface AppSettings {
-  tarifPerM3: number; // default Rp 3.000 / m3
-  biayaAbonemen: number; // default Rp 20.000
-  batasLonjakanM3: number; // default 30 m3
+  tarifPerM3: number;
+  biayaAbonemen: number;
+  batasLonjakanM3: number;
   namaPetugas: string;
-  periodeAktif: string; // e.g. 'Oktober 2026'
+  periodeAktif: string;
   darkMode: boolean;
 }
