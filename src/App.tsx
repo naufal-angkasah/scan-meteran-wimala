@@ -28,6 +28,7 @@ import { QrCodePrintSheet } from './components/QrCodePrintSheet';
 import { SettingsModal } from './components/SettingsModal';
 import { PhotoViewerModal } from './components/PhotoViewerModal';
 import { BottomNav } from './components/BottomNav';
+import { Analytics } from '@vercel/analytics/react';
 
 export const App: React.FC = () => {
   // Global States
@@ -361,6 +362,9 @@ export const App: React.FC = () => {
           onClose={() => setViewingPhotoReading(null)}
         />
       )}
+
+      {/* Vercel Web Analytics */}
+      <Analytics />
     </div>
   );
 };
