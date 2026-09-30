@@ -1,0 +1,33 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && request.auth.token.role == 'admin';
+    }
+
+    function isWorker() {
+      return isAuthenticated() && request.auth.token.role == 'worker';
+    }
+
+    // Folder foto meteran air
+    // path: /meter-photos/{workerId}/{fileName}
+    match /meter-photos/{workerId}/{fileName} {
+      // Pembacaan bukti foto diizinkan untuk Admin dan Worker terautentikasi
+      allow read: if isAuthenticated();
+
+      // Worker hanya bisa upload ke foldernya sendiri, gambar maks 2MB, harus image
+      allow create: if (isWorker() && request.auth.uid == workerId) || isAdmin()
+                    && request.resource.size < 2 * 1024 * 1024
+                    && request.resource.contentType.matches('image/.*');
+
+      // Update / Delete hanya diizinkan untuk Admin
+      allow update, delete: if isAdmin();
+    }
+  }
+}

@@ -1,0 +1,55 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && request.auth.token.role == 'admin';
+    }
+
+    function isWorker() {
+      return isAuthenticated() && request.auth.token.role == 'worker';
+    }
+
+    function isOwner(uid) {
+      return isAuthenticated() && request.auth.uid == uid;
+    }
+
+    // 1. Koleksi: users
+    // Admin bisa baca & tulis semua. User bisa baca datanya sendiri.
+    match /users/{userId} {
+      allow read: if isAuthenticated() && (isAdmin() || isOwner(userId));
+      allow write: if isAdmin();
+    }
+
+    // 2. Koleksi: customers
+    // Admin bisa baca dan tulis (CRUD). Worker hanya bisa baca.
+    match /customers/{customerId} {
+      allow read: if isAuthenticated() && (isAdmin() || isWorker());
+      allow write: if isAdmin();
+    }
+
+    // 3. Koleksi: tariffs
+    // Admin bisa baca dan tulis. Worker hanya bisa baca.
+    match /tariffs/{tariffId} {
+      allow read: if isAuthenticated() && (isAdmin() || isWorker());
+      allow write: if isAdmin();
+    }
+
+    // 4. Koleksi: readings
+    // Baca: Admin dan Worker (untuk cek riwayat hari ini & data bulan lalu).
+    // Tulis (create/update): HANYA melalui Cloud Function (Admin SDK bypasses security rules).
+    // Admin diizinkan edit manual / update status ke 'valid' atau delete dari dashboard admin.
+    // Worker DILARANG menulis langsung ke koleksi ini.
+    match /readings/{readingId} {
+      allow read: if isAuthenticated() && (isAdmin() || isWorker());
+      allow create: if false; // Harus lewat callable Cloud Function simpanReading
+      allow update, delete: if isAdmin();
+    }
+  }
+}
