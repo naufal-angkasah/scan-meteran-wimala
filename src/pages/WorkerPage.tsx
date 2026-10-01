@@ -13,7 +13,9 @@ import {
   LogOut,
   ChevronRight,
   Edit2,
-  ShieldCheck
+  ShieldCheck,
+  Info,
+  CheckCircle2
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
@@ -46,6 +48,7 @@ export const WorkerPage: React.FC = () => {
   const [isProcessingOcr, setIsProcessingOcr] = useState<boolean>(false);
   const [ocrConfidence, setOcrConfidence] = useState<number>(1);
   const [angkaSekarangInput, setAngkaSekarangInput] = useState<string>('');
+  const [isManualVerified, setIsManualVerified] = useState<boolean>(false);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successNotice, setSuccessNotice] = useState<string | null>(null);
@@ -317,7 +320,7 @@ export const WorkerPage: React.FC = () => {
 
   // Cek kondisi anomali
   const isAngkaMundur = isValidNumber && parsedAngkaSekarang < angkaSebelumnya;
-  const isConfidenceRendah = ocrConfidence < 0.7;
+  const isConfidenceRendah = !isManualVerified && ocrConfidence < 0.7;
   const isLonjakanTinggi = customerAvgUsage > 0 && pemakaianM3 > 3 * customerAvgUsage;
 
   const hasAnomaly = isAngkaMundur || isConfidenceRendah || isLonjakanTinggi;
@@ -695,28 +698,69 @@ export const WorkerPage: React.FC = () => {
               )}
             </div>
 
+            {/* Panduan Jelas Pencatatan Angka Meteran */}
+            <div className="bg-slate-950 border border-teal-800/80 rounded-lg p-3 space-y-1.5 text-xs">
+              <div className="flex items-center gap-1.5 text-teal-300 font-bold">
+                <Info className="w-4 h-4 text-teal-400 flex-shrink-0" />
+                <span>Petunjuk Ketik Manual (PDAM):</span>
+              </div>
+              <p className="text-slate-300 text-[11px] leading-relaxed">
+                • <strong>HANYA masukkan ANGKA HITAM (m³)</strong>. Angka merah (liter/desimal) atau jarum putar merah <strong>diabaikan (jangan diketik)</strong>.
+              </p>
+              <p className="text-slate-400 text-[11px]">
+                • Contoh: Jika di rol meteran tertulis <span className="font-mono text-white bg-slate-800 px-1 py-0.5 rounded">0000136</span>, cukup ketik <strong className="text-teal-300 font-mono">136</strong> (atau <span className="font-mono text-teal-300">0000136</span>).
+              </p>
+            </div>
+
             {/* Input Angka Konfirmasi & Koreksi Manual */}
             <div className="bg-slate-950 border-2 border-slate-700 rounded-lg p-3 space-y-2">
               <div className="flex items-center justify-between">
                 <label className="text-xs font-extrabold text-white uppercase tracking-wide">
                   Angka Meter Sekarang (m³):
                 </label>
-                {ocrConfidence < 0.7 && capturedPhoto && (
-                  <span className="text-[10px] text-amber-400 font-bold bg-amber-950 px-2 py-0.5 rounded border border-amber-800">
-                    OCR Rendah ({Math.round(ocrConfidence * 100)}%)
+                {isManualVerified ? (
+                  <span className="text-[10px] text-teal-300 font-bold bg-teal-950 px-2 py-0.5 rounded border border-teal-700 flex items-center gap-1">
+                    <CheckCircle2 className="w-3 h-3 text-teal-400" />
+                    Terverifikasi Petugas
                   </span>
-                )}
+                ) : ocrConfidence < 0.7 && capturedPhoto ? (
+                  <span className="text-[10px] text-amber-400 font-bold bg-amber-950 px-2 py-0.5 rounded border border-amber-800">
+                    Perlu Verifikasi Angka
+                  </span>
+                ) : capturedPhoto ? (
+                  <span className="text-[10px] text-teal-300 font-bold bg-teal-950 px-2 py-0.5 rounded border border-teal-700">
+                    OCR Otomatis ({Math.round(ocrConfidence * 100)}%)
+                  </span>
+                ) : null}
               </div>
 
-              <div className="relative">
+              <div className="flex items-center gap-2">
                 <input
                   type="number"
                   inputMode="numeric"
-                  placeholder="Ketik angka meter..."
+                  placeholder="Ketik angka hitam (m³)..."
                   value={angkaSekarangInput}
-                  onChange={(e) => setAngkaSekarangInput(e.target.value)}
-                  className="w-full font-mono text-2xl font-black px-3 py-2.5 bg-slate-900 border-2 border-teal-500 rounded text-white focus:outline-none focus:ring-2 focus:ring-teal-400"
+                  onChange={(e) => {
+                    setAngkaSekarangInput(e.target.value);
+                    setIsManualVerified(true);
+                    setOcrConfidence(1.0);
+                  }}
+                  className="flex-1 font-mono text-2xl font-black px-3 py-2.5 bg-slate-900 border-2 border-teal-500 rounded text-white focus:outline-none focus:ring-2 focus:ring-teal-400"
                 />
+                {angkaSekarangInput && !isManualVerified && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsManualVerified(true);
+                      setOcrConfidence(1.0);
+                    }}
+                    className="px-3.5 py-3 bg-teal-700 hover:bg-teal-600 active:bg-teal-800 text-white font-bold text-xs rounded border border-teal-500 flex items-center gap-1 shadow-sm whitespace-nowrap cursor-pointer"
+                    title="Konfirmasi bahwa angka meteran ini sudah benar"
+                  >
+                    <Check className="w-4 h-4 stroke-[3]" />
+                    <span>Sesuai</span>
+                  </button>
+                )}
               </div>
 
               {/* Ringkasan Pemakaian Realtime */}
@@ -744,7 +788,7 @@ export const WorkerPage: React.FC = () => {
                 )}
                 {isConfidenceRendah && (
                   <p className="font-normal text-rose-200">
-                    • Kualitas foto buram / confidence OCR rendah.
+                    • Kualitas foto buram / belum diverifikasi petugas. Klik tombol "Sesuai" atau edit angka untuk konfirmasi.
                   </p>
                 )}
                 {isLonjakanTinggi && (
