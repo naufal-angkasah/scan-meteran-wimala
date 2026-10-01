@@ -25,10 +25,8 @@ import {
   Save,
   Check,
   Building,
-  UserCheck,
-  Camera
+  UserCheck
 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
 import * as XLSX from 'xlsx';
 import { 
@@ -51,7 +49,6 @@ type AdminTab = 'pelanggan' | 'pencatatan' | 'tarif' | 'cetak_qr' | 'worker';
 
 export const AdminPage: React.FC = () => {
   const { profile, logout } = useAuth();
-  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<AdminTab>('pencatatan');
 
   // Global Period Filter
@@ -558,15 +555,6 @@ export const AdminPage: React.FC = () => {
             className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded border border-slate-700"
           >
             <RefreshCw className={`w-4 h-4 ${loadingData ? 'animate-spin text-teal-400' : ''}`} />
-          </button>
-
-          <button
-            onClick={() => navigate('/worker')}
-            title="Buka Layar Petugas (Mode Kamera/Scan QR)"
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-teal-800 hover:bg-teal-700 text-xs font-bold text-teal-100 rounded border border-teal-600 transition-colors"
-          >
-            <Camera className="w-3.5 h-3.5" />
-            <span>Layar Petugas</span>
           </button>
 
           <button
