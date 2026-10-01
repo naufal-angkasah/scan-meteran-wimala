@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <!-- Rounded Background -->
+  <rect width="64" height="64" rx="14" fill="#0f766e"/>
+  
+  <!-- Water Droplet Silhouette -->
+  <path d="M32 10C32 10 18 27.5 18 38C18 45.7 24.3 52 32 52C39.7 52 46 45.7 46 38C46 27.5 32 10 32 10Z" fill="#14b8a6"/>
+  
+  <!-- Meter Dial Gauge Inside Droplet -->
+  <circle cx="32" cy="38" r="9" fill="#042f2e" stroke="#ccfbf1" stroke-width="1.8"/>
+  <line x1="32" y1="38" x2="37" y2="33" stroke="#f59e0b" stroke-width="2" stroke-linecap="round"/>
+  <circle cx="32" cy="38" r="2" fill="#ffffff"/>
+  
+  <!-- Counter Window Digits -->
+  <rect x="26" y="27" width="12" height="4.5" rx="1" fill="#042f2e" stroke="#5eead4" stroke-width="0.8"/>
+  <circle cx="28.5" cy="29.2" r="0.8" fill="#5eead4"/>
+  <circle cx="32" cy="29.2" r="0.8" fill="#5eead4"/>
+  <circle cx="35.5" cy="29.2" r="0.8" fill="#5eead4"/>
+</svg>

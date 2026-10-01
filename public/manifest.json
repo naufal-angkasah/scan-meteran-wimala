@@ -1,0 +1,77 @@
+{
+  "name": "Rekap Meteran Air PDAM - Wimala Land",
+  "short_name": "Meteran Air",
+  "description": "Sistem Pencatatan & Verifikasi Meteran Air PDAM Kawasan Wimala Land",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0f172a",
+  "theme_color": "#0f766e",
+  "icons": [
+    {
+      "src": "/favicon-16x16.png",
+      "sizes": "16x16",
+      "type": "image/png"
+    },
+    {
+      "src": "/favicon-32x32.png",
+      "sizes": "32x32",
+      "type": "image/png"
+    },
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/screenshot-mobile.png",
+      "sizes": "430x932",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Tampilan Scan Kamera & Viewfinder Petugas"
+    },
+    {
+      "src": "/screenshot-desktop.png",
+      "sizes": "1280x720",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "Tampilan Tabel Validasi & Laporan Administrator"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Scan Meteran (Worker)",
+      "short_name": "Scan",
+      "description": "Buka kamera pemindaian QR meteran",
+      "url": "/worker",
+      "icons": [
+        {
+          "src": "/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "Panel Admin",
+      "short_name": "Admin",
+      "description": "Buka dashboard rekapan dan tarif",
+      "url": "/admin",
+      "icons": [
+        {
+          "src": "/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    }
+  ]
+}
