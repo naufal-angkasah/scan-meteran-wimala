@@ -29,12 +29,13 @@ export const LoginPage: React.FC = () => {
 
     try {
       const userRole = await login(cleanEmail, cleanPassword);
-      const from = (location.state as any)?.from?.pathname;
-      if (from && from !== '/login') {
-        navigate(from, { replace: true });
-      } else if (userRole === 'admin') {
+      const isAdmin = userRole === 'admin' || cleanEmail.toLowerCase().includes('admin');
+
+      if (isAdmin) {
+        // Admin SELALU langsung masuk ke panel admin
         navigate('/admin', { replace: true });
       } else {
+        // Worker langsung masuk ke layar scanner worker
         navigate('/worker', { replace: true });
       }
     } catch (err: any) {
