@@ -199,16 +199,52 @@ async function run() {
         role: 'worker',
         aktif: true,
       }, { merge: true });
-      console.log('✅ Dokumen profil Worker tersimpan di users/{uid} dengan role: worker.');
+      console.log('✅ Dokumen profil Worker 1 tersimpan di users/{uid} dengan role: worker.');
+    }
+
+    // 5. Buat / Login Akun Worker 2
+    console.log('Membuat akun Worker 2 (Petugas Lapangan)...');
+    let worker2Uid = null;
+    const worker2Email = 'petugas2@wimalaland.id';
+    const worker2Pass = 'Petugas123!';
+
+    try {
+      const credW2 = await createUserWithEmailAndPassword(auth, worker2Email, worker2Pass);
+      worker2Uid = credW2.user.uid;
+      await updateProfile(credW2.user, { displayName: 'Bambang Sutrisno (Petugas 2)' });
+      console.log(`✅ Akun Worker 2 berhasil dibuat (UID: ${worker2Uid})`);
+    } catch (e) {
+      if (e.code === 'auth/email-already-in-use') {
+        const credW2 = await signInWithEmailAndPassword(auth, worker2Email, worker2Pass);
+        worker2Uid = credW2.user.uid;
+        console.log(`ℹ️ Akun Worker 2 sudah ada, berhasil login (UID: ${worker2Uid})`);
+      } else {
+        throw e;
+      }
+    }
+
+    if (worker2Uid) {
+      await setDoc(doc(db, 'users', worker2Uid), {
+        uid: worker2Uid,
+        email: worker2Email,
+        nama: 'Bambang Sutrisno (Petugas 2)',
+        role: 'worker',
+        aktif: true,
+      }, { merge: true });
+      console.log('✅ Dokumen profil Worker 2 tersimpan di users/{uid} dengan role: worker.');
     }
 
     console.log('\n🎉 SEMUA DATA DATABASE & AKUN AUTH BERHASIL DI-SEED 100%!');
     console.log('\nKredensial Login:');
-    console.log('1. ADMIN  : admin@wimalaland.id / WimalaAdmin2026!');
-    console.log('2. WORKER : petugas1@wimalaland.id / Petugas123!');
+    console.log('1. ADMIN    : admin@wimalaland.id / WimalaAdmin2026!');
+    console.log('2. WORKER 1 : petugas1@wimalaland.id / Petugas123!');
+    console.log('3. WORKER 2 : petugas2@wimalaland.id / Petugas123!');
+    process.exit(0);
   } catch (error) {
     console.error('❌ Gagal seeding:', error);
+    process.exit(1);
   }
 }
 
 run();
+

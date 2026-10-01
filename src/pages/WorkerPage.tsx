@@ -15,7 +15,7 @@ import {
   Edit2
 } from 'lucide-react';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
-import { doc, getDoc, collection, query, where, getDocs, orderBy, limit } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, collection, query, where, getDocs, orderBy, limit, serverTimestamp } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { db, storage, callBacaMeteran, callSimpanReading } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
@@ -242,8 +242,60 @@ export const WorkerPage: React.FC = () => {
         }
       } catch (ocrErr: any) {
         console.warn('Panggilan Cloud Function OCR gagal/belum tersedia:', ocrErr);
-        // Fallback OCR lokal jika Cloud Function offline
-        setOcrConfidence(0.5);
+        // Fallback panggil Gemini Vision langsung dari client jika API Key disetel di environment
+        const geminiApiKey = import.meta.env.VITE_FIREBASE_GEMINI_API_KEY;
+        let ocrSukses = false;
+
+        if (geminiApiKey) {
+          try {
+            const cleanBase64 = compressed.base64.replace(/^data:image\/[a-z]+;base64,/, '');
+            const gRes = await fetch(
+              `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiApiKey}`,
+              {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  contents: [{
+                    parts: [
+                      {
+                        text: 'Analisis foto meteran air PDAM ini. Fokus HANYA pada roda angka meteran (angka hitam untuk m3 kubik bulat). Kembalikan JSON persis format: {"angka": 1234, "confidence": 0.95}. Jika buram atau tidak ada angka, kembalikan: {"angka": null, "confidence": 0.2}.'
+                      },
+                      {
+                        inline_data: {
+                          mime_type: 'image/jpeg',
+                          data: cleanBase64
+                        }
+                      }
+                    ]
+                  }],
+                  generationConfig: {
+                    response_mime_type: 'application/json',
+                    temperature: 0.1,
+                  }
+                })
+              }
+            );
+
+            if (gRes.ok) {
+              const gData = await gRes.json();
+              const text = gData.candidates?.[0]?.content?.parts?.[0]?.text;
+              if (text) {
+                const parsed = JSON.parse(text);
+                if (typeof parsed.angka === 'number') {
+                  setAngkaSekarangInput(parsed.angka.toString());
+                  setOcrConfidence(parsed.confidence ?? 0.9);
+                  ocrSukses = true;
+                }
+              }
+            }
+          } catch (gErr) {
+            console.warn('Direct Gemini API client call error:', gErr);
+          }
+        }
+
+        if (!ocrSukses) {
+          setOcrConfidence(0.5);
+        }
       }
     } catch (err: any) {
       console.error('Error saat kompresi foto:', err);
@@ -293,14 +345,65 @@ export const WorkerPage: React.FC = () => {
         finalFotoUrl = await getDownloadURL(snap.ref);
       }
 
-      // Panggil Callable Cloud Function simpanReading
-      const res = await callSimpanReading({
-        customerId: selectedCustomer.id,
-        periode: currentPeriode,
-        angka: parsedAngkaSekarang,
-        fotoUrl: finalFotoUrl,
-        ocrConfidence: ocrConfidence,
-      });
+      // Coba panggil Cloud Function simpanReading, fallback langsung ke Firestore jika Cloud Function belum aktif
+      try {
+        await callSimpanReading({
+          customerId: selectedCustomer.id,
+          periode: currentPeriode,
+          angka: parsedAngkaSekarang,
+          fotoUrl: finalFotoUrl,
+          ocrConfidence: ocrConfidence,
+        });
+      } catch (fnErr: any) {
+        console.warn('Cloud Function simpanReading offline, menyimpan langsung ke Firestore:', fnErr);
+        const readingId = `${selectedCustomer.id}_${currentPeriode}`;
+        const anomalyReason = isAngkaMundur
+          ? `Angka baru (${parsedAngkaSekarang}) lebih kecil dari angka sebelumnya (${angkaSebelumnya})`
+          : isLonjakanTinggi
+          ? `Lonjakan pemakaian tinggi (${pemakaianM3} m3 vs rata-rata ${customerAvgUsage.toFixed(1)} m3)`
+          : isConfidenceRendah
+          ? `Kualitas OCR rendah (${Math.round(ocrConfidence * 100)}%)`
+          : null;
+
+        // Hitung estimasi tagihan bertingkat PDAM Wimala
+        let calculatedTagihan = 0;
+        if (pemakaianM3 <= 10) {
+          calculatedTagihan = pemakaianM3 * 2700;
+        } else if (pemakaianM3 <= 20) {
+          calculatedTagihan = 10 * 2700 + (pemakaianM3 - 10) * 5400;
+        } else if (pemakaianM3 <= 30) {
+          calculatedTagihan = 10 * 2700 + 10 * 5400 + (pemakaianM3 - 20) * 10800;
+        } else {
+          calculatedTagihan = 10 * 2700 + 10 * 5400 + 10 * 10800 + (pemakaianM3 - 30) * 21600;
+        }
+
+        await setDoc(doc(db, 'readings', readingId), {
+          id: readingId,
+          customerId: selectedCustomer.id,
+          blok: selectedCustomer.blok,
+          namaPemilik: selectedCustomer.namaPemilik,
+          periode: currentPeriode,
+          angkaSebelumnya: angkaSebelumnya,
+          angkaSekarang: parsedAngkaSekarang,
+          pemakaianM3: pemakaianM3,
+          totalTagihan: calculatedTagihan,
+          fotoUrl: finalFotoUrl,
+          ocrConfidence: ocrConfidence,
+          statusVerifikasi: hasAnomaly ? 'perlu_cek' : 'valid',
+          catatanAnomali: anomalyReason,
+          petugasId: user?.uid || 'petugas',
+          petugasNama: profile?.nama || user?.email || 'Petugas Lapangan',
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        }, { merge: true });
+
+        // Update catatan terakhir di master pelanggan
+        await updateDoc(doc(db, 'customers', selectedCustomer.id), {
+          lastReading: parsedAngkaSekarang,
+          lastPeriode: currentPeriode,
+          updatedAt: serverTimestamp(),
+        }).catch(() => {});
+      }
 
       setSuccessNotice(`Catatan meteran ${selectedCustomer.blok} berhasil disimpan.`);
       
