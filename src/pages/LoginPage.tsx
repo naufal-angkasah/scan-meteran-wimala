@@ -24,13 +24,13 @@ export const LoginPage: React.FC = () => {
     setSubmitting(true);
 
     try {
-      await login(email, password);
-      // AuthProvider will update user & role
+      const userRole = await login(email, password);
       const from = (location.state as any)?.from?.pathname;
       if (from && from !== '/login') {
         navigate(from, { replace: true });
+      } else if (userRole === 'admin') {
+        navigate('/admin', { replace: true });
       } else {
-        // Default destination based on role will be handled or default to /worker
         navigate('/worker', { replace: true });
       }
     } catch (err: any) {

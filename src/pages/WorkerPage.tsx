@@ -12,8 +12,10 @@ import {
   Gauge, 
   LogOut,
   ChevronRight,
-  Edit2
+  Edit2,
+  ShieldCheck
 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 import { doc, getDoc, setDoc, updateDoc, collection, query, where, getDocs, orderBy, limit, serverTimestamp } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
@@ -24,6 +26,7 @@ import { compressMeterPhoto } from '../lib/imageCompression';
 
 export const WorkerPage: React.FC = () => {
   const { user, profile, logout } = useAuth();
+  const navigate = useNavigate();
 
   // Current active period (YYYY-MM)
   const currentPeriode = new Date().toISOString().slice(0, 7); // e.g. "2026-09"
@@ -473,6 +476,23 @@ export const WorkerPage: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-900 text-white flex flex-col justify-between max-w-md mx-auto select-none">
+      {/* Admin Quick Switcher Banner */}
+      {(profile?.role === 'admin' || user?.email?.toLowerCase().includes('admin')) && (
+        <div className="bg-amber-400 text-slate-950 px-3.5 py-2 text-xs font-bold flex items-center justify-between border-b border-amber-500 shadow-sm">
+          <div className="flex items-center gap-1.5">
+            <ShieldCheck className="w-4 h-4 text-slate-900 flex-shrink-0" />
+            <span>Login sebagai Admin</span>
+          </div>
+          <button
+            onClick={() => navigate('/admin')}
+            className="bg-slate-950 hover:bg-slate-800 text-white px-2.5 py-1 rounded text-[11px] font-bold transition-colors flex items-center gap-1"
+          >
+            <span>Panel Admin</span>
+            <span>&rarr;</span>
+          </button>
+        </div>
+      )}
+
       {/* Top Header: Petugas & Periode (Kontras Tinggi) */}
       <header className="bg-slate-950 px-4 py-3 border-b border-slate-800 flex items-center justify-between">
         <div>

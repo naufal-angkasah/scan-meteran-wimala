@@ -24,7 +24,7 @@ const RootRedirect: React.FC = () => {
     return <Navigate to="/login" replace />;
   }
 
-  if (role === 'admin') {
+  if (role === 'admin' || user.email?.toLowerCase().includes('admin')) {
     return <Navigate to="/admin" replace />;
   }
 

@@ -27,9 +27,12 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
-  if (allowedRoles && role && !allowedRoles.includes(role)) {
+  const isEffectiveAdmin = role === 'admin' || !!user.email?.toLowerCase().includes('admin');
+  const effectiveRole: UserRole = isEffectiveAdmin ? 'admin' : (role || 'worker');
+
+  if (allowedRoles && !allowedRoles.includes(effectiveRole)) {
     // Redirect ke halaman default sesuai peran
-    if (role === 'admin') {
+    if (effectiveRole === 'admin') {
       return <Navigate to="/admin" replace />;
     } else {
       return <Navigate to="/worker" replace />;
