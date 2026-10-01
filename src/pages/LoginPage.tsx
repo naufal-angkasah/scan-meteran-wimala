@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Droplet, AlertCircle, Lock, Mail, ArrowRight } from 'lucide-react';
+import { Droplet, AlertCircle, Lock, Mail, ArrowRight, Eye, EyeOff } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 export const LoginPage: React.FC = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -15,7 +16,10 @@ export const LoginPage: React.FC = () => {
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email || !password) {
+    const cleanEmail = email.trim();
+    const cleanPassword = password.trim();
+
+    if (!cleanEmail || !cleanPassword) {
       setErrorMsg('Email dan kata sandi wajib diisi.');
       return;
     }
@@ -24,7 +28,7 @@ export const LoginPage: React.FC = () => {
     setSubmitting(true);
 
     try {
-      const userRole = await login(email, password);
+      const userRole = await login(cleanEmail, cleanPassword);
       const from = (location.state as any)?.from?.pathname;
       if (from && from !== '/login') {
         navigate(from, { replace: true });
@@ -81,7 +85,7 @@ export const LoginPage: React.FC = () => {
               Email Petugas / Admin
             </label>
             <div className="relative">
-              <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+              <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-2.5 pointer-events-none" />
               <input
                 type="email"
                 required
@@ -98,15 +102,28 @@ export const LoginPage: React.FC = () => {
               Kata Sandi
             </label>
             <div className="relative">
-              <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+              <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-2.5 pointer-events-none" />
               <input
-                type="password"
+                type={showPassword ? 'text' : 'password'}
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
-                className="w-full pl-9 pr-3 py-2 text-xs border border-slate-300 rounded bg-white text-slate-900 focus:outline-none focus:border-teal-600 focus:ring-1 focus:ring-teal-600"
+                className="w-full pl-9 pr-10 py-2 text-xs border border-slate-300 rounded bg-white text-slate-900 focus:outline-none focus:border-teal-600 focus:ring-1 focus:ring-teal-600"
               />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-2.5 top-2 p-1 text-slate-400 hover:text-slate-600 focus:outline-none"
+                title={showPassword ? 'Sembunyikan sandi' : 'Lihat sandi'}
+                tabIndex={-1}
+              >
+                {showPassword ? (
+                  <EyeOff className="w-4 h-4 text-slate-600" />
+                ) : (
+                  <Eye className="w-4 h-4 text-slate-400" />
+                )}
+              </button>
             </div>
           </div>
 

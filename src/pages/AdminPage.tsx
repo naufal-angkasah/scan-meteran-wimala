@@ -15,6 +15,7 @@ import {
   Search, 
   Filter, 
   Eye, 
+  EyeOff,
   Lock, 
   UserPlus, 
   ShieldCheck, 
@@ -457,6 +458,7 @@ export const AdminPage: React.FC = () => {
   // -------------------------------------------------------------
   const [workerEmail, setWorkerEmail] = useState('');
   const [workerPassword, setWorkerPassword] = useState('');
+  const [showWorkerPassword, setShowWorkerPassword] = useState(false);
   const [workerNama, setWorkerNama] = useState('');
   const [creatingWorker, setCreatingWorker] = useState(false);
 
@@ -1336,15 +1338,30 @@ export const AdminPage: React.FC = () => {
                     <label className="text-xs font-semibold text-slate-700 block mb-1">
                       Kata Sandi Awal:
                     </label>
-                    <input
-                      type="password"
-                      required
-                      minLength={6}
-                      placeholder="Minimal 6 karakter"
-                      value={workerPassword}
-                      onChange={(e) => setWorkerPassword(e.target.value)}
-                      className="w-full text-xs px-3 py-2 border border-slate-300 rounded focus:outline-none focus:border-teal-700"
-                    />
+                    <div className="relative">
+                      <input
+                        type={showWorkerPassword ? 'text' : 'password'}
+                        required
+                        minLength={6}
+                        placeholder="Minimal 6 karakter"
+                        value={workerPassword}
+                        onChange={(e) => setWorkerPassword(e.target.value)}
+                        className="w-full text-xs pl-3 pr-10 py-2 border border-slate-300 rounded focus:outline-none focus:border-teal-700"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowWorkerPassword(!showWorkerPassword)}
+                        className="absolute right-2.5 top-2 p-1 text-slate-400 hover:text-slate-600 focus:outline-none"
+                        title={showWorkerPassword ? 'Sembunyikan sandi' : 'Lihat sandi'}
+                        tabIndex={-1}
+                      >
+                        {showWorkerPassword ? (
+                          <EyeOff className="w-4 h-4 text-slate-600" />
+                        ) : (
+                          <Eye className="w-4 h-4 text-slate-400" />
+                        )}
+                      </button>
+                    </div>
                   </div>
 
                   <button
