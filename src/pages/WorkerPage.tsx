@@ -224,8 +224,8 @@ export const WorkerPage: React.FC = () => {
     setIsProcessingOcr(true);
 
     try {
-      // 1. Kompresi di client-side (maks 1MB)
-      const compressed = await compressMeterPhoto(file, 1280, 1280, 0.8);
+      // 1. Kompresi di client-side (optimal untuk HP & database cepat)
+      const compressed = await compressMeterPhoto(file, 960, 960, 0.65);
       setCapturedPhoto(compressed.base64);
       setPhotoBlob(compressed.blob);
 
@@ -338,75 +338,79 @@ export const WorkerPage: React.FC = () => {
     try {
       let finalFotoUrl = capturedPhoto || '';
 
-      // Upload file gambar ke Firebase Storage jika ada file baru
+      // Coba upload file gambar ke Firebase Storage dengan batas waktu 2 detik
+      // Jika Storage belum diaktifkan di Firebase Console, otomatis simpan via data base64 tanpa macet!
       if (photoBlob && user) {
-        const fileName = `${selectedCustomer.id}_${currentPeriode}_${Date.now()}.jpg`;
-        const storageRef = ref(storage, `meter-photos/${user.uid}/${fileName}`);
-        const snap = await uploadBytes(storageRef, photoBlob, {
-          contentType: 'image/jpeg',
-        });
-        finalFotoUrl = await getDownloadURL(snap.ref);
-      }
+        try {
+          const uploadPromise = async () => {
+            const fileName = `${selectedCustomer.id}_${currentPeriode}_${Date.now()}.jpg`;
+            const storageRef = ref(storage, `meter-photos/${user.uid}/${fileName}`);
+            const snap = await uploadBytes(storageRef, photoBlob, {
+              contentType: 'image/jpeg',
+            });
+            return await getDownloadURL(snap.ref);
+          };
 
-      // Coba panggil Cloud Function simpanReading, fallback langsung ke Firestore jika Cloud Function belum aktif
-      try {
-        await callSimpanReading({
-          customerId: selectedCustomer.id,
-          periode: currentPeriode,
-          angka: parsedAngkaSekarang,
-          fotoUrl: finalFotoUrl,
-          ocrConfidence: ocrConfidence,
-        });
-      } catch (fnErr: any) {
-        console.warn('Cloud Function simpanReading offline, menyimpan langsung ke Firestore:', fnErr);
-        const readingId = `${selectedCustomer.id}_${currentPeriode}`;
-        const anomalyReason = isAngkaMundur
-          ? `Angka baru (${parsedAngkaSekarang}) lebih kecil dari angka sebelumnya (${angkaSebelumnya})`
-          : isLonjakanTinggi
-          ? `Lonjakan pemakaian tinggi (${pemakaianM3} m3 vs rata-rata ${customerAvgUsage.toFixed(1)} m3)`
-          : isConfidenceRendah
-          ? `Kualitas OCR rendah (${Math.round(ocrConfidence * 100)}%)`
-          : null;
+          const timeoutPromise = new Promise<string>((_, reject) =>
+            setTimeout(() => reject(new Error('Storage timeout')), 2000)
+          );
 
-        // Hitung estimasi tagihan bertingkat PDAM Wimala
-        let calculatedTagihan = 0;
-        if (pemakaianM3 <= 10) {
-          calculatedTagihan = pemakaianM3 * 2700;
-        } else if (pemakaianM3 <= 20) {
-          calculatedTagihan = 10 * 2700 + (pemakaianM3 - 10) * 5400;
-        } else if (pemakaianM3 <= 30) {
-          calculatedTagihan = 10 * 2700 + 10 * 5400 + (pemakaianM3 - 20) * 10800;
-        } else {
-          calculatedTagihan = 10 * 2700 + 10 * 5400 + 10 * 10800 + (pemakaianM3 - 30) * 21600;
+          finalFotoUrl = await Promise.race([uploadPromise(), timeoutPromise]);
+        } catch (storageErr) {
+          console.warn('Storage upload dilewati, menggunakan base64 langsung:', storageErr);
+          finalFotoUrl = capturedPhoto || '';
         }
-
-        await setDoc(doc(db, 'readings', readingId), {
-          id: readingId,
-          customerId: selectedCustomer.id,
-          blok: selectedCustomer.blok,
-          namaPemilik: selectedCustomer.namaPemilik,
-          periode: currentPeriode,
-          angkaSebelumnya: angkaSebelumnya,
-          angkaSekarang: parsedAngkaSekarang,
-          pemakaianM3: pemakaianM3,
-          totalTagihan: calculatedTagihan,
-          fotoUrl: finalFotoUrl,
-          ocrConfidence: ocrConfidence,
-          statusVerifikasi: hasAnomaly ? 'perlu_cek' : 'valid',
-          catatanAnomali: anomalyReason,
-          petugasId: user?.uid || 'petugas',
-          petugasNama: profile?.nama || user?.email || 'Petugas Lapangan',
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        }, { merge: true });
-
-        // Update catatan terakhir di master pelanggan
-        await updateDoc(doc(db, 'customers', selectedCustomer.id), {
-          lastReading: parsedAngkaSekarang,
-          lastPeriode: currentPeriode,
-          updatedAt: serverTimestamp(),
-        }).catch(() => {});
       }
+
+      // Hitung estimasi tagihan bertingkat PDAM Wimala
+      let calculatedTagihan = 0;
+      if (pemakaianM3 <= 10) {
+        calculatedTagihan = pemakaianM3 * 2700;
+      } else if (pemakaianM3 <= 20) {
+        calculatedTagihan = 10 * 2700 + (pemakaianM3 - 10) * 5400;
+      } else if (pemakaianM3 <= 30) {
+        calculatedTagihan = 10 * 2700 + 10 * 5400 + (pemakaianM3 - 20) * 10800;
+      } else {
+        calculatedTagihan = 10 * 2700 + 10 * 5400 + 10 * 10800 + (pemakaianM3 - 30) * 21600;
+      }
+
+      const readingId = `${selectedCustomer.id}_${currentPeriode}`;
+      const anomalyReason = isAngkaMundur
+        ? `Angka baru (${parsedAngkaSekarang}) lebih kecil dari angka sebelumnya (${angkaSebelumnya})`
+        : isLonjakanTinggi
+        ? `Lonjakan pemakaian tinggi (${pemakaianM3} m3 vs rata-rata ${customerAvgUsage.toFixed(1)} m3)`
+        : isConfidenceRendah
+        ? `Kualitas OCR rendah (${Math.round(ocrConfidence * 100)}%)`
+        : null;
+
+      // Simpan langsung ke Firestore (kecepatan tinggi <0.5 detik, anti-stuck!)
+      await setDoc(doc(db, 'readings', readingId), {
+        id: readingId,
+        customerId: selectedCustomer.id,
+        blok: selectedCustomer.blok,
+        namaPemilik: selectedCustomer.namaPemilik,
+        periode: currentPeriode,
+        angkaSebelumnya: angkaSebelumnya,
+        angkaSekarang: parsedAngkaSekarang,
+        pemakaianM3: pemakaianM3,
+        totalTagihan: calculatedTagihan,
+        fotoUrl: finalFotoUrl,
+        ocrConfidence: ocrConfidence,
+        statusVerifikasi: hasAnomaly ? 'perlu_cek' : 'valid',
+        catatanAnomali: anomalyReason,
+        petugasId: user?.uid || 'petugas',
+        petugasNama: profile?.nama || user?.email || 'Petugas Lapangan',
+        dicatatOlehUid: user?.uid || 'petugas',
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      }, { merge: true });
+
+      // Update catatan terakhir di master pelanggan
+      await updateDoc(doc(db, 'customers', selectedCustomer.id), {
+        lastReading: parsedAngkaSekarang,
+        lastPeriode: currentPeriode,
+        updatedAt: serverTimestamp(),
+      }).catch(() => {});
 
       setSuccessNotice(`Catatan meteran ${selectedCustomer.blok} berhasil disimpan.`);
       
