@@ -148,10 +148,69 @@ export const LoginPage: React.FC = () => {
           </button>
         </form>
 
+        {/* Akun Percobaan (Langsung Coba) */}
+        <div className="pt-3 border-t border-slate-200 space-y-2">
+          <span className="text-[11px] font-bold uppercase tracking-wider text-slate-600 block">
+            Akun Login Cepat (Klik untuk Isi):
+          </span>
+          <div className="space-y-1.5">
+            <button
+              type="button"
+              onClick={() => {
+                setEmail('admin@wimalaland.id');
+                setPassword('WimalaAdmin2026!');
+              }}
+              className="w-full text-left p-2 rounded bg-slate-50 hover:bg-teal-50 border border-slate-200 hover:border-teal-400 transition-colors cursor-pointer group"
+            >
+              <div className="flex items-center justify-between text-xs font-bold text-slate-800 group-hover:text-teal-900">
+                <span>👑 Super Admin</span>
+                <span className="text-[10px] text-teal-700 bg-teal-100 px-1.5 py-0.5 rounded font-semibold">Klik Isi</span>
+              </div>
+              <div className="text-[11px] text-slate-600 font-mono mt-0.5">
+                admin@wimalaland.id | <span className="text-slate-500 font-semibold">WimalaAdmin2026!</span>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setEmail('petugas1@wimalaland.id');
+                setPassword('Petugas123!');
+              }}
+              className="w-full text-left p-2 rounded bg-slate-50 hover:bg-teal-50 border border-slate-200 hover:border-teal-400 transition-colors cursor-pointer group"
+            >
+              <div className="flex items-center justify-between text-xs font-bold text-slate-800 group-hover:text-teal-900">
+                <span>🔧 Petugas 1</span>
+                <span className="text-[10px] text-teal-700 bg-teal-100 px-1.5 py-0.5 rounded font-semibold">Klik Isi</span>
+              </div>
+              <div className="text-[11px] text-slate-600 font-mono mt-0.5">
+                petugas1@wimalaland.id | <span className="text-slate-500 font-semibold">Petugas123!</span>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setEmail('petugas2@wimalaland.id');
+                setPassword('Petugas123!');
+              }}
+              className="w-full text-left p-2 rounded bg-slate-50 hover:bg-teal-50 border border-slate-200 hover:border-teal-400 transition-colors cursor-pointer group"
+            >
+              <div className="flex items-center justify-between text-xs font-bold text-slate-800 group-hover:text-teal-900">
+                <span>🔧 Petugas 2</span>
+                <span className="text-[10px] text-teal-700 bg-teal-100 px-1.5 py-0.5 rounded font-semibold">Klik Isi</span>
+              </div>
+              <div className="text-[11px] text-slate-600 font-mono mt-0.5">
+                petugas2@wimalaland.id | <span className="text-slate-500 font-semibold">Petugas123!</span>
+              </div>
+            </button>
+          </div>
+        </div>
+
         {/* Footer Info Singkat */}
-        <div className="pt-2 border-t border-slate-100 text-center">
+        <div className="pt-1 text-center">
           <p className="text-[11px] text-slate-400">
-            Akses khusus 1 Admin & 2 Petugas Lapangan. Tidak ada pendaftaran mandiri.
+            Akses khusus 1 Admin & 2 Petugas Lapangan Wimala Land.
           </p>
         </div>
       </div>
