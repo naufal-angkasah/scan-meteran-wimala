@@ -40,8 +40,9 @@ import {
   orderBy, 
   serverTimestamp 
 } from 'firebase/firestore';
-import { sendPasswordResetEmail } from 'firebase/auth';
-import { auth, db, callBuatWorker, callNonaktifkanWorker, callResetPasswordWorker } from '../lib/firebase';
+import { initializeApp, getApps } from 'firebase/app';
+import { sendPasswordResetEmail, getAuth, createUserWithEmailAndPassword, signOut } from 'firebase/auth';
+import { auth, db, firebaseConfig, callResetPasswordWorker } from '../lib/firebase';
 import { useAuth, UserProfile } from '../context/AuthContext';
 import { normalizeBlok, blokToId } from '../lib/blok';
 import { Customer, Tariff, ReadingRecord, StatusRumah, ReadingStatus } from '../types';
@@ -505,25 +506,54 @@ export const AdminPage: React.FC = () => {
   const handleCreateWorker = async (e: React.FormEvent) => {
     e.preventDefault();
     if (workers.length >= 2) {
-      alert('Maksimal hanya 2 akun worker yang diizinkan sesuai aturan sistem.');
+      alert('Maksimal hanya 2 akun worker yang diizinkan sesuai aturan sistem. Hapus salah satu worker terlebih dahulu jika ingin mengganti.');
+      return;
+    }
+    if (workerPassword.length < 6) {
+      alert('Kata sandi minimal 6 karakter.');
       return;
     }
     setCreatingWorker(true);
     try {
-      await callBuatWorker({
-        email: workerEmail,
-        password: workerPassword,
-        nama: workerNama,
+      // 1. Buat user di Firebase Auth menggunakan secondary app agar sesi login admin tidak logout
+      const secondaryApp = getApps().find((a) => a.name === 'Secondary') || initializeApp(firebaseConfig, 'Secondary');
+      const secondaryAuth = getAuth(secondaryApp);
+      const cred = await createUserWithEmailAndPassword(secondaryAuth, workerEmail.trim(), workerPassword);
+      await signOut(secondaryAuth);
+
+      // 2. Simpan data worker di Firestore users/{uid}
+      await setDoc(doc(db, 'users', cred.user.uid), {
+        uid: cred.user.uid,
+        email: workerEmail.trim(),
+        nama: workerNama.trim(),
+        role: 'worker',
+        aktif: true,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
       });
+
       setFeedbackNotice({ type: 'success', message: `Akun worker ${workerNama} berhasil dibuat.` });
       setWorkerEmail('');
       setWorkerPassword('');
       setWorkerNama('');
       loadAllData();
     } catch (err: any) {
+      console.error('Error saat membuat akun worker:', err);
       alert(`Gagal membuat akun worker: ${err.message}`);
     } finally {
       setCreatingWorker(false);
+    }
+  };
+
+  const handleDeleteWorker = async (w: UserProfile) => {
+    if (confirm(`Yakin ingin menghapus akun worker ${w.nama} (${w.email})? Setelah dihapus, slot worker kosong dan Anda bisa menambahkan worker baru.`)) {
+      try {
+        await deleteDoc(doc(db, 'users', w.uid));
+        setFeedbackNotice({ type: 'success', message: `Akun worker ${w.nama} berhasil dihapus.` });
+        loadAllData();
+      } catch (err: any) {
+        alert(`Gagal menghapus akun worker: ${err.message}`);
+      }
     }
   };
 
@@ -1368,9 +1398,18 @@ export const AdminPage: React.FC = () => {
                                 setResetWorkerTarget(w);
                                 setNewPasswordInput('');
                               }}
-                              className="px-2 py-1 text-[11px] font-bold rounded bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-700"
+                              className="px-2 py-1 text-[11px] font-bold rounded bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-700 cursor-pointer"
                             >
                               Reset Sandi
+                            </button>
+
+                            {/* Hapus Worker */}
+                            <button
+                              onClick={() => handleDeleteWorker(w)}
+                              title="Hapus Akun Worker"
+                              className="px-2 py-1 text-[11px] font-bold rounded bg-rose-50 hover:bg-rose-100 border border-rose-300 text-rose-700 cursor-pointer"
+                            >
+                              Hapus
                             </button>
                           </td>
                         </tr>

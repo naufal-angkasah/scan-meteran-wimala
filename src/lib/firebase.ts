@@ -4,7 +4,7 @@ import { getFirestore } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 
-const firebaseConfig = {
+export const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY || 'AIzaSyBfQfCuo7cqZXG7cWY1Xj_tjVrwBZjeMrI',
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || 'wimala-land.firebaseapp.com',
   projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || 'wimala-land',
