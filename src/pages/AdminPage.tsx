@@ -40,7 +40,8 @@ import {
   orderBy, 
   serverTimestamp 
 } from 'firebase/firestore';
-import { db, callBuatWorker, callNonaktifkanWorker, callResetPasswordWorker } from '../lib/firebase';
+import { sendPasswordResetEmail } from 'firebase/auth';
+import { auth, db, callBuatWorker, callNonaktifkanWorker, callResetPasswordWorker } from '../lib/firebase';
 import { useAuth, UserProfile } from '../context/AuthContext';
 import { normalizeBlok, blokToId } from '../lib/blok';
 import { Customer, Tariff, ReadingRecord, StatusRumah, ReadingStatus } from '../types';
@@ -526,13 +527,48 @@ export const AdminPage: React.FC = () => {
     }
   };
 
+  // Edit nama worker state
+  const [editingWorker, setEditingWorker] = useState<UserProfile | null>(null);
+  const [workerNamaEdit, setWorkerNamaEdit] = useState('');
+
+  const handleOpenEditWorker = (w: UserProfile) => {
+    setEditingWorker(w);
+    setWorkerNamaEdit(w.nama);
+  };
+
+  const handleSaveEditWorker = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingWorker || !workerNamaEdit.trim()) {
+      alert('Nama petugas tidak boleh kosong.');
+      return;
+    }
+    try {
+      await updateDoc(doc(db, 'users', editingWorker.uid), {
+        nama: workerNamaEdit.trim(),
+        updatedAt: serverTimestamp(),
+      });
+      setFeedbackNotice({
+        type: 'success',
+        message: `Nama petugas berhasil diperbarui menjadi "${workerNamaEdit.trim()}".`,
+      });
+      setEditingWorker(null);
+      loadAllData();
+    } catch (err: any) {
+      alert(`Gagal mengubah nama petugas: ${err.message}`);
+    }
+  };
+
   const handleToggleWorkerStatus = async (w: UserProfile) => {
     try {
-      await callNonaktifkanWorker({
-        workerId: w.uid,
-        aktif: !w.aktif,
+      const nextAktif = !w.aktif;
+      await updateDoc(doc(db, 'users', w.uid), {
+        aktif: nextAktif,
+        updatedAt: serverTimestamp(),
       });
-      setFeedbackNotice({ type: 'success', message: `Status akun ${w.nama} diperbarui.` });
+      setFeedbackNotice({
+        type: 'success',
+        message: `Status akun ${w.nama} berhasil diubah menjadi ${nextAktif ? 'Aktif' : 'Nonaktif'}.`,
+      });
       loadAllData();
     } catch (err: any) {
       alert(`Gagal mengubah status: ${err.message}`);
@@ -540,10 +576,7 @@ export const AdminPage: React.FC = () => {
   };
 
   const handleResetPassword = async () => {
-    if (!resetWorkerTarget || newPasswordInput.length < 6) {
-      alert('Kata sandi baru minimal 6 karakter.');
-      return;
-    }
+    if (!resetWorkerTarget) return;
     try {
       await callResetPasswordWorker({
         workerId: resetWorkerTarget.uid,
@@ -552,8 +585,15 @@ export const AdminPage: React.FC = () => {
       setFeedbackNotice({ type: 'success', message: `Kata sandi ${resetWorkerTarget.nama} berhasil direset.` });
       setResetWorkerTarget(null);
       setNewPasswordInput('');
-    } catch (err: any) {
-      alert(`Gagal reset password: ${err.message}`);
+    } catch (_cfErr: any) {
+      try {
+        await sendPasswordResetEmail(auth, resetWorkerTarget.email);
+        alert(`Link tautan reset kata sandi telah dikirim ke email ${resetWorkerTarget.email}.`);
+        setResetWorkerTarget(null);
+        setNewPasswordInput('');
+      } catch (emailErr: any) {
+        alert(`Gagal reset password: ${emailErr.message}`);
+      }
     }
   };
 
@@ -1285,7 +1325,18 @@ export const AdminPage: React.FC = () => {
                     ) : (
                       workers.map((w) => (
                         <tr key={w.uid} className="hover:bg-slate-50">
-                          <td className="p-2.5 font-bold text-slate-900">{w.nama}</td>
+                          <td className="p-2.5 font-bold text-slate-900">
+                            <div className="flex items-center gap-1.5">
+                              <span>{w.nama}</span>
+                              <button
+                                onClick={() => handleOpenEditWorker(w)}
+                                title="Edit Nama Petugas"
+                                className="p-1 hover:bg-slate-200 rounded text-slate-500 hover:text-teal-700 cursor-pointer"
+                              >
+                                <Edit3 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
                           <td className="p-2.5 font-mono text-slate-600">{w.email}</td>
                           <td className="p-2.5">
                             {w.aktif ? (
@@ -1626,6 +1677,57 @@ export const AdminPage: React.FC = () => {
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================ */}
+      {/* MODAL: EDIT NAMA WORKER */}
+      {/* ============================================================ */}
+      {editingWorker && (
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded max-w-sm w-full overflow-hidden shadow-2xl border border-slate-300">
+            <div className="bg-slate-900 text-white p-3 flex items-center justify-between">
+              <strong className="text-sm font-bold">Edit Nama Petugas</strong>
+              <button
+                onClick={() => setEditingWorker(null)}
+                className="p-1 hover:bg-slate-800 rounded text-slate-300"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <form onSubmit={handleSaveEditWorker} className="p-4 space-y-3">
+              <p className="text-xs text-slate-600">
+                Email: <strong className="font-mono">{editingWorker.email}</strong>
+              </p>
+              <div>
+                <label className="text-xs font-bold text-slate-700 block mb-1">
+                  Nama Lengkap Petugas:
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={workerNamaEdit}
+                  onChange={(e) => setWorkerNamaEdit(e.target.value)}
+                  className="w-full text-xs font-bold px-3 py-2 border border-slate-300 rounded focus:outline-none focus:border-teal-700"
+                />
+              </div>
+              <div className="pt-2 flex justify-end gap-2 border-t">
+                <button
+                  type="button"
+                  onClick={() => setEditingWorker(null)}
+                  className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-xs font-bold text-slate-600 rounded"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold rounded cursor-pointer"
+                >
+                  Simpan Nama
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
