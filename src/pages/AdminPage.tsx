@@ -31,6 +31,7 @@ import * as XLSX from 'xlsx';
 import { 
   collection, 
   getDocs, 
+  onSnapshot, 
   doc, 
   setDoc, 
   deleteDoc, 
@@ -74,25 +75,44 @@ export const AdminPage: React.FC = () => {
     }
   }, [feedbackNotice]);
 
-  // Load all core data
-  const loadAllData = async () => {
-    setLoadingData(true);
+  // Load data statis sekali (Tarif & Workers)
+  const loadStaticData = async () => {
     try {
-      // 1. Load Customers
-      const custSnap = await getDocs(collection(db, 'customers'));
-      const custList: Customer[] = [];
-      custSnap.forEach((d) => custList.push({ id: d.id, ...d.data() } as Customer));
-      custList.sort((a, b) => a.blok.localeCompare(b.blok, undefined, { numeric: true }));
-      setCustomers(custList);
-
-      // 2. Load Tariffs
       const tariffSnap = await getDocs(query(collection(db, 'tariffs'), orderBy('minM3', 'asc')));
       const tariffList: Tariff[] = [];
       tariffSnap.forEach((d) => tariffList.push({ id: d.id, ...d.data() } as Tariff));
       setTariffs(tariffList);
+    } catch (err: any) {
+      console.error('Error saat memuat data tarif:', err);
+    }
+  };
 
-      // 3. Load Readings for active period
-      const readSnap = await getDocs(query(collection(db, 'readings'), where('periode', '==', selectedPeriode)));
+  // Muat ulang manual jika diperlukan (misal admin menekan tombol reload)
+  const loadAllData = async () => {
+    setLoadingData(true);
+    await loadStaticData();
+    setLoadingData(false);
+  };
+
+  // Realtime Data Sync: Otomatis masuk saat worker mencatat atau menambah unit baru,
+  // tanpa polling berkala sehingga hemat baterai, kuota internet, dan RAM.
+  useEffect(() => {
+    setLoadingData(true);
+    loadStaticData();
+
+    // 1. Realtime listener: Pelanggan (otomatis update jika worker tambah unit baru dari stiker)
+    const unsubCust = onSnapshot(collection(db, 'customers'), (custSnap) => {
+      const custList: Customer[] = [];
+      custSnap.forEach((d) => custList.push({ id: d.id, ...d.data() } as Customer));
+      custList.sort((a, b) => a.blok.localeCompare(b.blok, undefined, { numeric: true }));
+      setCustomers(custList);
+    }, (err) => {
+      console.warn('Realtime customers listener:', err);
+    });
+
+    // 2. Realtime listener: Pencatatan periode berjalan (otomatis update begitu worker simpan reading)
+    const qReadings = query(collection(db, 'readings'), where('periode', '==', selectedPeriode));
+    const unsubRead = onSnapshot(qReadings, (readSnap) => {
       const readList: ReadingRecord[] = [];
       readSnap.forEach((d) => {
         const x: any = d.data();
@@ -105,22 +125,28 @@ export const AdminPage: React.FC = () => {
         } as ReadingRecord);
       });
       setReadings(readList);
+      setLoadingData(false);
+    }, (err) => {
+      console.warn('Realtime readings listener:', err);
+      setLoadingData(false);
+    });
 
-      // 4. Load Workers
-      const userSnap = await getDocs(query(collection(db, 'users'), where('role', '==', 'worker')));
+    // 3. Realtime listener: Users/Workers (otomatis update jika worker dinonaktifkan/ditambah/dihapus)
+    const qWorkers = query(collection(db, 'users'), where('role', '==', 'worker'));
+    const unsubWorkers = onSnapshot(qWorkers, (userSnap) => {
       const workerList: UserProfile[] = [];
       userSnap.forEach((d) => workerList.push({ uid: d.id, ...d.data() } as UserProfile));
       setWorkers(workerList);
-    } catch (err: any) {
-      console.error('Error saat memuat data admin:', err);
-      setFeedbackNotice({ type: 'error', message: `Gagal memuat data: ${err.message}` });
-    } finally {
-      setLoadingData(false);
-    }
-  };
+    }, (err) => {
+      console.warn('Realtime workers listener:', err);
+    });
 
-  useEffect(() => {
-    loadAllData();
+    // Cleanup: Memutus listener saat ganti periode atau keluar halaman agar tidak bocor memori / hemat RAM & baterai
+    return () => {
+      unsubCust();
+      unsubRead();
+      unsubWorkers();
+    };
   }, [selectedPeriode]);
 
   // -------------------------------------------------------------
@@ -647,6 +673,10 @@ export const AdminPage: React.FC = () => {
 
         {/* Global Period Selector & Logout */}
         <div className="flex items-center gap-3">
+          <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded bg-teal-950/80 border border-teal-700/80 text-[11px] text-teal-300 font-semibold" title="Data diperbarui otomatis secara real-time tanpa perlu refresh">
+            <span className="w-2 h-2 rounded-full bg-teal-400 animate-pulse"></span>
+            <span>Real-time Aktif</span>
+          </div>
           <div className="flex items-center gap-1.5 bg-slate-800 border border-slate-700 rounded px-2.5 py-1">
             <span className="text-xs text-slate-400">Periode:</span>
             <input
