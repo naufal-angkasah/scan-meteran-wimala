@@ -4,20 +4,30 @@
 const FIREBASE_API_KEY =
   process.env.VITE_FIREBASE_API_KEY || 'AIzaSyBfQfCuo7cqZXG7cWY1Xj_tjVrwBZjeMrI';
 
-const PROMPT = `Foto ini berisi meteran air PDAM di perumahan (Wimala Land) dan stiker atau tulisan identitas unit rumah di boks/tutup meteran (stiker cetak atau tulisan spidol).
+const PROMPT = `Kamu adalah pakar pembacaan meteran air PDAM di Indonesia (Wimala Land).
+Foto ini berisi meteran air PDAM dan biasanya juga stiker atau tulisan identitas unit rumah di boks/tutup meteran.
 
-Tugas:
-1. "angka": baca ANGKA HITAM pada rol counter meteran air (satuan meter kubik m3). ABAIKAN angka merah di belakang atau jarum putar merah (liter). Tulis sebagai angka murni bulat (contoh rol 00332 -> 332).
-2. Dari stiker atau tulisan unit rumah:
+ATURAN PENTING PDAM INDONESIA:
+1. Rol angka utama memiliki angka HITAM dan seringkali angka MERAH di bagian belakangnya:
+   - Angka HITAM di sebelah kiri adalah satuan METER KUBIK (m³). Ini adalah ANGKA UTAMA yang harus dicatat!
+   - Angka MERAH di sebelah kanan (atau jarum putar merah kecil) adalah satuan LITER/desimal. ABAIKAN angka merah ini, JANGAN dimasukkan ke angka m³!
+   - Contoh: jika rol menunjukkan '00315' hitam dan '837' merah, maka angka m³ adalah 315.
+   - Contoh: jika rol menunjukkan '01258' hitam dan '050' merah, maka angka m³ adalah 1258.
+   - Contoh: jika rol menunjukkan '02713' (semuanya hitam), maka angka m³ adalah 2713.
+   - Contoh: jika rol menunjukkan '0058' hitam dan '8' merah, maka angka m³ adalah 58.
+   - Hilangkan nol di depan (leading zeros) pada hasil akhir integer: 00315 -> 315.
+
+2. Dari stiker atau tulisan identitas unit rumah di boks / tutup meteran:
    - "cluster": nama cluster perumahan jika tertulis (contoh: Kamala)
-   - "blok": blok dan nomor unit/rumah/kavling (contoh: D-15, D15, Blok D No 15, Unit D-15, No. 15, dll). Formatkan rapi (misal huruf blok dan nomor: D-15).
+   - "blok": blok dan nomor unit/rumah/kavling (contoh: D-15, D15, Blok D No 15, Unit D-15, No. 15, dll). Formatkan rapi (misal: D-15).
    - "pengguna": nama pemilik/penghuni jika tertulis
-3. "confidence": skor 0.0 sampai 1.0 seberapa jelas pembacaan angka meterannya.
-4. "catatan": keterangan singkat hasil pembacaan.
+
+3. "confidence": tingkat kepastian angka hitam (0.0 sampai 1.0).
+4. "catatan": rincian digit hitam yang terbaca dan digit merah yang diabaikan.
 
 Balas HANYA JSON persis format ini:
 {"angka": number|null, "confidence": number, "cluster": string|null, "blok": string|null, "pengguna": string|null, "catatan": string}
-Isi null jika tidak terbaca. Jangan mengarang.`;
+Isi null jika tidak terlihat atau tidak terbaca.`;
 
 async function verifyFirebaseToken(idToken: string): Promise<boolean> {
   try {
