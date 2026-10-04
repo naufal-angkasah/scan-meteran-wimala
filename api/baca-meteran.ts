@@ -4,16 +4,20 @@
 const FIREBASE_API_KEY =
   process.env.VITE_FIREBASE_API_KEY || 'AIzaSyBfQfCuo7cqZXG7cWY1Xj_tjVrwBZjeMrI';
 
-const PROMPT = `Foto ini berisi meteran air PDAM di Indonesia dan biasanya juga stiker / tulisan identitas unit rumah di tutup boks meteran (stiker cetak atau tulisan spidol).
+const PROMPT = `Foto ini berisi meteran air PDAM di perumahan (Wimala Land) dan stiker atau tulisan identitas unit rumah di boks/tutup meteran (stiker cetak atau tulisan spidol).
 
 Tugas:
-1. "angka": baca ANGKA HITAM pada rol meteran (satuan meter kubik). ABAIKAN angka merah / jarum merah (liter). Tulis sebagai bilangan bulat tanpa nol di depan (contoh rol 0000136 -> 136).
-2. Dari stiker/tulisan di tutup boks: "cluster" (contoh Kamala), "blok" (contoh D-15), "pengguna" (nama penghuni, jika ada).
-3. "confidence": angka 0-1 seberapa yakin kamu dengan pembacaan angka meteran.
-4. "catatan": kalimat pendek jika ada yang meragukan.
+1. "angka": baca ANGKA HITAM pada rol counter meteran air (satuan meter kubik m3). ABAIKAN angka merah di belakang atau jarum putar merah (liter). Tulis sebagai angka murni bulat (contoh rol 00332 -> 332).
+2. Dari stiker atau tulisan unit rumah:
+   - "cluster": nama cluster perumahan jika tertulis (contoh: Kamala)
+   - "blok": blok dan nomor unit/rumah/kavling (contoh: D-15, D15, Blok D No 15, Unit D-15, No. 15, dll). Formatkan rapi (misal huruf blok dan nomor: D-15).
+   - "pengguna": nama pemilik/penghuni jika tertulis
+3. "confidence": skor 0.0 sampai 1.0 seberapa jelas pembacaan angka meterannya.
+4. "catatan": keterangan singkat hasil pembacaan.
 
-Balas HANYA JSON: {"angka": number|null, "confidence": number, "cluster": string|null, "blok": string|null, "pengguna": string|null, "catatan": string}
-Isi null untuk bagian yang tidak terlihat atau tidak terbaca. Jangan menebak.`;
+Balas HANYA JSON persis format ini:
+{"angka": number|null, "confidence": number, "cluster": string|null, "blok": string|null, "pengguna": string|null, "catatan": string}
+Isi null jika tidak terbaca. Jangan mengarang.`;
 
 async function verifyFirebaseToken(idToken: string): Promise<boolean> {
   try {
@@ -60,9 +64,9 @@ export default async function handler(req: any, res: any) {
 
   const models = [
     process.env.GEMINI_MODEL,
-    'gemini-2.5-flash',
-    'gemini-2.0-flash',
-    'gemini-1.5-flash',
+    'gemini-3.5-flash-lite',
+    'gemini-flash-lite-latest',
+    'gemini-3.8-flash',
   ].filter(Boolean) as string[];
 
   let lastError = 'Pembacaan AI gagal.';
@@ -89,7 +93,7 @@ export default async function handler(req: any, res: any) {
 
       if (!g.ok) {
         lastError = `Gemini (${model}) HTTP ${g.status}`;
-        if (g.status === 404 || g.status === 400) continue; // model tidak tersedia -> coba berikutnya
+        if (g.status === 404 || g.status === 400 || g.status === 503 || g.status === 429) continue;
         break;
       }
 

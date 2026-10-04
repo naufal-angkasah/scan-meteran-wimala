@@ -97,16 +97,26 @@ export const WorkerPage: React.FC = () => {
 
   // -------------------------------------------------------------
   // 1. Cari unit rumah berdasarkan blok (dari stiker / ketik manual)
-  // -------------------------------------------------------------
   const cariCustomerByBlok = async (raw: string): Promise<Customer | null> => {
     const blok = normalizeBlok(raw);
     if (!blok) return null;
 
+    // 1. Cari by ID normalized (contoh: d_15)
     const byId = await getDoc(doc(db, 'customers', blokToId(blok)));
     if (byId.exists()) return { id: byId.id, ...byId.data() } as Customer;
 
+    // 2. Cari by ID raw lowercase
+    const byIdRaw = await getDoc(doc(db, 'customers', raw.trim().toLowerCase()));
+    if (byIdRaw.exists()) return { id: byIdRaw.id, ...byIdRaw.data() } as Customer;
+
+    // 3. Query field 'blok' normalized
     const snap = await getDocs(query(collection(db, 'customers'), where('blok', '==', blok), limit(1)));
     if (!snap.empty) return { id: snap.docs[0].id, ...snap.docs[0].data() } as Customer;
+
+    // 4. Query field 'blok' raw uppercase
+    const snapRaw = await getDocs(query(collection(db, 'customers'), where('blok', '==', raw.trim().toUpperCase()), limit(1)));
+    if (!snapRaw.empty) return { id: snapRaw.docs[0].id, ...snapRaw.docs[0].data() } as Customer;
+
     return null;
   };
 
@@ -585,14 +595,19 @@ export const WorkerPage: React.FC = () => {
             {/* Input Manual Blok (jika stiker tidak terbaca) */}
             <div className="bg-slate-950 border border-slate-800 rounded-lg p-3 space-y-2">
               <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wide block">
-                {capturedPhoto ? 'Stiker tidak terbaca? Ketik blok rumah:' : 'Atau ketik blok rumah:'}
+                {capturedPhoto ? 'Stiker tidak terbaca? Ketik blok / nomor unit rumah:' : 'Atau ketik blok / nomor unit rumah:'}
               </label>
               <div className="flex gap-2">
                 <input
                   type="text"
-                  placeholder="Contoh: D-15"
+                  placeholder="Contoh: D-15 atau Unit 15"
                   value={manualCustomerId}
                   onChange={(e) => setManualCustomerId(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && manualCustomerId.trim()) {
+                      handleCariBlok(manualCustomerId.trim(), !!capturedPhoto, lastOcr);
+                    }
+                  }}
                   className="flex-1 px-3 py-2 text-sm font-bold bg-slate-900 border border-slate-700 rounded text-white uppercase focus:outline-none focus:border-teal-500"
                 />
                 <button
@@ -601,7 +616,7 @@ export const WorkerPage: React.FC = () => {
                       handleCariBlok(manualCustomerId.trim(), !!capturedPhoto, lastOcr);
                     }
                   }}
-                  className="px-4 py-2 bg-teal-600 hover:bg-teal-500 active:bg-teal-700 text-white text-xs font-bold rounded flex items-center gap-1"
+                  className="px-4 py-2 bg-teal-600 hover:bg-teal-500 active:bg-teal-700 text-white text-xs font-bold rounded flex items-center gap-1 cursor-pointer"
                 >
                   <span>Cari</span>
                   <ChevronRight className="w-4 h-4" />

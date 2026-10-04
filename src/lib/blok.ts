@@ -4,11 +4,26 @@
  * "d12b" -> "D-12B"
  */
 export function normalizeBlok(raw: string | null | undefined): string {
-  const s = (raw || '').toUpperCase().replace(/[^A-Z0-9\s-]/g, ' ');
-  const m = s.match(/\b([A-Z])\s*-?\s*(\d{1,3})([A-Z])?\b/);
-  if (!m) return s.replace(/\s+/g, ' ').trim();
-  const num = m[2].length < 2 ? m[2].padStart(2, '0') : m[2];
-  return `${m[1]}-${num}${m[3] || ''}`;
+  const s = (raw || '').toUpperCase();
+  // Hilangkan kata-kata umum seperti BLOK, UNIT, KAVLING, RUMAH, NOMOR, NO
+  const sClean = s
+    .replace(/\b(BLOK|BLOCK|UNIT|KAVLING|KAV|RUMAH|NOMOR|NO)\b/g, ' ')
+    .replace(/[^A-Z0-9\s-]/g, ' ');
+
+  // 1. Pola: Huruf Blok + Angka Nomor (contoh: D-15, D15, D 15, D12B)
+  const m = sClean.match(/\b([A-Z])\s*-?\s*(\d{1,3})([A-Z])?\b/);
+  if (m) {
+    const num = m[2].length < 2 ? m[2].padStart(2, '0') : m[2];
+    return `${m[1]}-${num}${m[3] || ''}`;
+  }
+
+  // 2. Pola: Hanya nomor unit tanpa huruf blok
+  const mNum = sClean.match(/\b(\d{1,3})([A-Z])?\b/);
+  if (mNum) {
+    return `${mNum[1]}${mNum[2] || ''}`;
+  }
+
+  return s.replace(/\s+/g, ' ').trim();
 }
 
 /** ID dokumen Firestore dari blok: "D-12B" -> "d_12b" (sama dengan data seed) */
