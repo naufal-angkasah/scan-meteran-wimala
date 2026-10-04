@@ -15,16 +15,19 @@ import {
   Edit2,
   ShieldCheck,
   Info,
-  CheckCircle2
+  CheckCircle2,
+  UserPlus
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 import { doc, getDoc, setDoc, updateDoc, collection, query, where, getDocs, orderBy, limit, serverTimestamp } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { db, storage, callBacaMeteran, callSimpanReading } from '../lib/firebase';
+import { db, storage } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
-import { Customer, ReadingRecord, StatusRumah } from '../types';
+import { Customer, ReadingRecord, StatusRumah, Tariff } from '../types';
 import { compressMeterPhoto } from '../lib/imageCompression';
+import { bacaFotoMeteran, OcrFoto } from '../lib/ocr';
+import { normalizeBlok, blokToId } from '../lib/blok';
+import { hitungBiaya } from '../lib/tariff';
 
 export const WorkerPage: React.FC = () => {
   const { user, profile, logout } = useAuth();
@@ -34,7 +37,7 @@ export const WorkerPage: React.FC = () => {
   const currentPeriode = new Date().toISOString().slice(0, 7); // e.g. "2026-09"
 
   // Step flow: 'scan_qr' | 'form_meter' | 'history'
-  const [activeStep, setActiveStep] = useState<'scan_qr' | 'form_meter' | 'history'>('scan_qr');
+  const [activeStep, setActiveStep] = useState<'scan_qr' | 'unit_baru' | 'form_meter' | 'history'>('scan_qr');
 
   // Selected customer state
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
@@ -53,258 +56,262 @@ export const WorkerPage: React.FC = () => {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successNotice, setSuccessNotice] = useState<string | null>(null);
 
-  // QR Scanner refs & states
-  const qrRegionId = 'worker-qr-reader';
-  const qrScannerRef = useRef<Html5Qrcode | null>(null);
-  const [isScannerRunning, setIsScannerRunning] = useState(false);
+  // Input blok manual
   const [manualCustomerId, setManualCustomerId] = useState('');
+  const [lastOcr, setLastOcr] = useState<OcrFoto | null>(null);
+
+  // Rumah belum terdaftar (stiker terbaca tapi data belum ada) -> tambah otomatis
+  const [newUnit, setNewUnit] = useState({ cluster: '', blok: '', nama: '', angkaAwal: '' });
+  const [isSavingUnit, setIsSavingUnit] = useState(false);
+
+  // Tarif air dari Firestore (diatur admin)
+  const [tariffs, setTariffs] = useState<Tariff[]>([]);
+  useEffect(() => {
+    getDocs(query(collection(db, 'tariffs'), orderBy('minM3', 'asc')))
+      .then((snap) => {
+        const list: Tariff[] = [];
+        snap.forEach((d) => list.push({ id: d.id, ...d.data() } as Tariff));
+        setTariffs(list);
+      })
+      .catch((e) => console.warn('Gagal memuat tarif, memakai tarif bawaan:', e));
+  }, []);
 
   // Today's history state
   const [todayReadings, setTodayReadings] = useState<ReadingRecord[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
 
-  // -------------------------------------------------------------
-  // 1. QR Scanner Lifecycle
-  // -------------------------------------------------------------
-  useEffect(() => {
-    let isMounted = true;
-
-    if (activeStep === 'scan_qr') {
-      const startQr = async () => {
-        try {
-          // Check element existence
-          const el = document.getElementById(qrRegionId);
-          if (!el) return;
-
-          const qr = new Html5Qrcode(qrRegionId, {
-            formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
-            verbose: false,
-          });
-          qrScannerRef.current = qr;
-
-          await qr.start(
-            { facingMode: 'environment' },
-            {
-              fps: 10,
-              qrbox: { width: 240, height: 240 },
-              aspectRatio: 1.0,
-            },
-            (decodedText) => {
-              if (!isMounted) return;
-              handleQrDetected(decodedText);
-            },
-            () => {}
-          );
-          if (isMounted) setIsScannerRunning(true);
-        } catch (err: any) {
-          console.warn('QR camera start failed, fallback to manual/upload:', err);
-          if (isMounted) setIsScannerRunning(false);
-        }
-      };
-
-      startQr();
-    }
-
-    return () => {
-      isMounted = false;
-      if (qrScannerRef.current?.isScanning) {
-        qrScannerRef.current.stop().catch(() => {});
-      }
-    };
-  }, [activeStep]);
-
-  // Stop QR scanner helper
-  const stopQrScanner = async () => {
-    if (qrScannerRef.current?.isScanning) {
-      try {
-        await qrScannerRef.current.stop();
-      } catch (e) {}
-      setIsScannerRunning(false);
-    }
+  // Kembali ke layar awal dan bersihkan semua state unit sebelumnya
+  const resetToStart = () => {
+    setSelectedCustomer(null);
+    setExistingReading(null);
+    setCapturedPhoto(null);
+    setPhotoBlob(null);
+    setAngkaSekarangInput('');
+    setIsManualVerified(false);
+    setOcrConfidence(1);
+    setLastOcr(null);
+    setManualCustomerId('');
+    setErrorMessage(null);
+    setActiveStep('scan_qr');
   };
 
   // -------------------------------------------------------------
-  // 2. Handle QR Code Detected & Load Customer
+  // 1. Cari unit rumah berdasarkan blok (dari stiker / ketik manual)
   // -------------------------------------------------------------
-  const handleQrDetected = async (rawCode: string) => {
-    await stopQrScanner();
-    // Clean string: e.g. "WIMALA:D-01" or "d-01" or raw customerId
-    const cleaned = rawCode.trim().replace(/^WIMALA:/i, '').toLowerCase().replace(/[^a-z0-9]/g, '_');
-    await loadCustomerData(cleaned);
+  const cariCustomerByBlok = async (raw: string): Promise<Customer | null> => {
+    const blok = normalizeBlok(raw);
+    if (!blok) return null;
+
+    const byId = await getDoc(doc(db, 'customers', blokToId(blok)));
+    if (byId.exists()) return { id: byId.id, ...byId.data() } as Customer;
+
+    const snap = await getDocs(query(collection(db, 'customers'), where('blok', '==', blok), limit(1)));
+    if (!snap.empty) return { id: snap.docs[0].id, ...snap.docs[0].data() } as Customer;
+    return null;
   };
 
-  const loadCustomerData = async (cId: string) => {
+  const handleCariBlok = async (raw: string, keepPhoto = false, ocr: OcrFoto | null = null) => {
     setErrorMessage(null);
     setSuccessNotice(null);
-
     try {
-      // 1. Ambil dokumen customer
-      const custDoc = await getDoc(doc(db, 'customers', cId));
-      if (!custDoc.exists()) {
-        // Fallback: cari by blok
-        const qCust = query(collection(db, 'customers'), where('blok', '==', cId.toUpperCase()), limit(1));
-        const snap = await getDocs(qCust);
-        if (snap.empty) {
-          setErrorMessage(`Pelanggan dengan kode "${cId}" tidak ditemukan.`);
-          setActiveStep('scan_qr');
-          return;
-        }
-        processCustomerFound({ id: snap.docs[0].id, ...snap.docs[0].data() } as Customer);
+      const found = await cariCustomerByBlok(raw);
+      if (found) {
+        await processCustomerFound(found, { keepPhoto });
         return;
       }
-
-      processCustomerFound({ id: custDoc.id, ...custDoc.data() } as Customer);
+      // Belum terdaftar -> tawarkan tambah otomatis
+      setNewUnit({
+        cluster: ocr?.cluster || '',
+        blok: normalizeBlok(raw),
+        nama: ocr?.pengguna || '',
+        angkaAwal: ocr?.angka !== null && ocr?.angka !== undefined ? String(ocr.angka) : '',
+      });
+      setActiveStep('unit_baru');
     } catch (err: any) {
       console.error('Error saat memuat customer:', err);
       setErrorMessage(`Gagal mengambil data pelanggan: ${err.message}`);
     }
   };
 
-  const processCustomerFound = async (customer: Customer) => {
+  // Petugas menambahkan unit baru dari stiker; admin menyesuaikan nanti
+  const handleBuatUnitBaru = async () => {
+    const blok = normalizeBlok(newUnit.blok);
+    if (!blok) {
+      setErrorMessage('Nomor blok wajib diisi.');
+      return;
+    }
+    setIsSavingUnit(true);
+    setErrorMessage(null);
+    try {
+      const id = blokToId(blok);
+      const existing = await getDoc(doc(db, 'customers', id));
+      let unit: Customer;
+      if (existing.exists()) {
+        unit = { id: existing.id, ...existing.data() } as Customer; // sudah dibuat orang lain, pakai saja
+      } else {
+        unit = {
+          id,
+          blok,
+          cluster: newUnit.cluster.trim(),
+          namaPemilik: newUnit.nama.trim() || 'Belum diisi',
+          nomorMeteran: '',
+          angkaAwal: Number(newUnit.angkaAwal) || 0,
+          statusRumah: 'terhuni',
+          needsReview: true,
+          sumber: 'worker',
+          dibuatOleh: profile?.nama || user?.email || 'Petugas',
+        };
+        await setDoc(doc(db, 'customers', id), {
+          ...unit,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      }
+      await processCustomerFound(unit, { keepPhoto: !!capturedPhoto });
+    } catch (err: any) {
+      console.error('Error saat menambah unit:', err);
+      setErrorMessage(`Gagal menambah unit: ${err.message}`);
+    } finally {
+      setIsSavingUnit(false);
+    }
+  };
+
+  const processCustomerFound = async (customer: Customer, opts: { keepPhoto?: boolean } = {}) => {
     setSelectedCustomer(customer);
 
-    // 2. Cek apakah sudah dicatat di periode berjalan
+    // Cek apakah sudah dicatat di periode berjalan
     const readingId = `${customer.id}_${currentPeriode}`;
     const readDoc = await getDoc(doc(db, 'readings', readingId));
+
+    // Riwayat unit: satu query sederhana (tanpa composite index), olah di client
+    let prevAngka = customer.angkaAwal ?? 0;
+    let avg = 0;
+    try {
+      const histSnap = await getDocs(query(collection(db, 'readings'), where('customerId', '==', customer.id)));
+      const past = histSnap.docs
+        .map((d) => d.data() as any)
+        .filter((r) => r.periode && r.periode < currentPeriode)
+        .sort((a, b) => String(b.periode).localeCompare(String(a.periode)));
+      if (past.length > 0) {
+        prevAngka = past[0].angkaSekarang ?? prevAngka;
+        const recent = past.slice(0, 6);
+        avg = recent.reduce((s, r) => s + (r.pemakaianM3 || 0), 0) / recent.length;
+      }
+    } catch (e) {
+      console.warn('Gagal memuat riwayat unit:', e);
+    }
+    setCustomerAvgUsage(avg);
 
     if (readDoc.exists()) {
       const rec = readDoc.data() as ReadingRecord;
       setExistingReading(rec);
       setAngkaSebelumnya(rec.angkaSebelumnya);
-      setAngkaSekarangInput(rec.angkaSekarang.toString());
-      setCapturedPhoto(rec.fotoUrl || null);
+      if (!opts.keepPhoto) {
+        setAngkaSekarangInput(rec.angkaSekarang.toString());
+        setCapturedPhoto(rec.fotoUrl || null);
+        setPhotoBlob(null);
+        setIsManualVerified(true); // data lama sudah pernah disimpan
+      }
     } else {
       setExistingReading(null);
-      setCapturedPhoto(null);
-      setPhotoBlob(null);
-      setAngkaSekarangInput('');
-
-      // 3. Tentukan angka bulan lalu (ambil reading terakhir sebelum periode ini)
-      const prevQuery = query(
-        collection(db, 'readings'),
-        where('customerId', '==', customer.id),
-        where('periode', '<', currentPeriode),
-        orderBy('periode', 'desc'),
-        limit(1)
-      );
-      try {
-        const prevSnap = await getDocs(prevQuery);
-        if (!prevSnap.empty) {
-          setAngkaSebelumnya(prevSnap.docs[0].data().angkaSekarang ?? customer.angkaAwal ?? 0);
-        } else {
-          setAngkaSebelumnya(customer.angkaAwal ?? 0);
-        }
-      } catch (e) {
-        setAngkaSebelumnya(customer.angkaAwal ?? 0);
+      setAngkaSebelumnya(prevAngka);
+      if (!opts.keepPhoto) {
+        setCapturedPhoto(null);
+        setPhotoBlob(null);
+        setAngkaSekarangInput('');
+        setIsManualVerified(false);
+        setOcrConfidence(1);
       }
-    }
-
-    // 4. Hitung rata-rata pemakaian historis pelanggan
-    try {
-      const histQuery = query(collection(db, 'readings'), where('customerId', '==', customer.id), limit(6));
-      const histSnap = await getDocs(histQuery);
-      if (!histSnap.empty) {
-        const sum = histSnap.docs.reduce((acc, d) => acc + (d.data().pemakaianM3 || 0), 0);
-        setCustomerAvgUsage(sum / histSnap.docs.length);
-      } else {
-        setCustomerAvgUsage(0);
-      }
-    } catch (e) {
-      setCustomerAvgUsage(0);
     }
 
     setActiveStep('form_meter');
   };
 
   // -------------------------------------------------------------
-  // 3. Foto Meteran & Kompresi & OCR Gemini Vision
+  // 3. Foto Meteran & Kompresi & OCR Gemini Vision (via /api/baca-meteran)
   // -------------------------------------------------------------
-  const handlePhotoCapture = async (e: React.ChangeEvent<HTMLInputElement>) => {
+
+  // Foto pertama: baca BLOK dari stiker + ANGKA dari meteran sekaligus
+  const handleStartPhoto = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
 
     setErrorMessage(null);
     setIsProcessingOcr(true);
+    setIsManualVerified(false);
+    setLastOcr(null);
 
     try {
-      // 1. Kompresi di client-side (optimal untuk HP & database cepat)
       const compressed = await compressMeterPhoto(file, 960, 960, 0.65);
       setCapturedPhoto(compressed.base64);
       setPhotoBlob(compressed.blob);
 
-      // 2. Panggil Cloud Function Gemini Vision OCR
+      let ocr: OcrFoto | null = null;
+      let ocrError: string | null = null;
       try {
-        const res = await callBacaMeteran({
-          fotoBase64: compressed.base64,
-          mimeType: 'image/jpeg',
-        });
-
-        if (res.data.angka !== null) {
-          setAngkaSekarangInput(res.data.angka.toString());
-          setOcrConfidence(res.data.confidence ?? 0.9);
+        ocr = await bacaFotoMeteran(compressed.base64);
+        setLastOcr(ocr);
+        if (ocr.angka !== null) {
+          setAngkaSekarangInput(String(ocr.angka));
+          setOcrConfidence(ocr.confidence ?? 0.8);
         } else {
+          setAngkaSekarangInput('');
           setOcrConfidence(0.3);
-          setErrorMessage('Angka meteran buram/tidak terbaca otomatis. Silakan masukkan angka secara manual.');
         }
       } catch (ocrErr: any) {
-        console.warn('Panggilan Cloud Function OCR gagal/belum tersedia:', ocrErr);
-        // Fallback panggil Gemini Vision langsung dari client jika API Key disetel di environment
-        const geminiApiKey = import.meta.env.VITE_FIREBASE_GEMINI_API_KEY;
-        let ocrSukses = false;
+        setAngkaSekarangInput('');
+        setOcrConfidence(0.3);
+        ocrError = ocrErr.message || 'Pembacaan foto gagal';
+      }
 
-        if (geminiApiKey) {
-          try {
-            const cleanBase64 = compressed.base64.replace(/^data:image\/[a-z]+;base64,/, '');
-            const gRes = await fetch(
-              `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiApiKey}`,
-              {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  contents: [{
-                    parts: [
-                      {
-                        text: 'Analisis foto meteran air PDAM ini. Fokus HANYA pada roda angka meteran (angka hitam untuk m3 kubik bulat). Kembalikan JSON persis format: {"angka": 1234, "confidence": 0.95}. Jika buram atau tidak ada angka, kembalikan: {"angka": null, "confidence": 0.2}.'
-                      },
-                      {
-                        inline_data: {
-                          mime_type: 'image/jpeg',
-                          data: cleanBase64
-                        }
-                      }
-                    ]
-                  }],
-                  generationConfig: {
-                    response_mime_type: 'application/json',
-                    temperature: 0.1,
-                  }
-                })
-              }
-            );
-
-            if (gRes.ok) {
-              const gData = await gRes.json();
-              const text = gData.candidates?.[0]?.content?.parts?.[0]?.text;
-              if (text) {
-                const parsed = JSON.parse(text);
-                if (typeof parsed.angka === 'number') {
-                  setAngkaSekarangInput(parsed.angka.toString());
-                  setOcrConfidence(parsed.confidence ?? 0.9);
-                  ocrSukses = true;
-                }
-              }
-            }
-          } catch (gErr) {
-            console.warn('Direct Gemini API client call error:', gErr);
-          }
-        }
-
-        if (!ocrSukses) {
-          setOcrConfidence(0.5);
-        }
+      if (ocr?.blok) {
+        await handleCariBlok(ocr.blok, true, ocr);
+      } else {
+        setErrorMessage(
+          ocrError
+            ? `${ocrError}. Ketik nomor blok di bawah, foto tetap tersimpan.`
+            : 'Blok di stiker tidak terbaca. Ketik nomor blok di bawah, foto tetap tersimpan.'
+        );
       }
     } catch (err: any) {
-      console.error('Error saat kompresi foto:', err);
+      console.error('Error saat memproses foto:', err);
+      setErrorMessage(`Gagal memproses foto: ${err.message}`);
+    } finally {
+      setIsProcessingOcr(false);
+    }
+  };
+
+  // Foto ulang di form: hanya membaca angka meteran
+  const handlePhotoCapture = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+
+    setErrorMessage(null);
+    setIsProcessingOcr(true);
+    setIsManualVerified(false);
+
+    try {
+      const compressed = await compressMeterPhoto(file, 960, 960, 0.65);
+      setCapturedPhoto(compressed.base64);
+      setPhotoBlob(compressed.blob);
+
+      try {
+        const ocr = await bacaFotoMeteran(compressed.base64);
+        if (ocr.angka !== null) {
+          setAngkaSekarangInput(String(ocr.angka));
+          setOcrConfidence(ocr.confidence ?? 0.8);
+        } else {
+          setOcrConfidence(0.3);
+          setErrorMessage('Angka meteran tidak terbaca otomatis. Ketik angka hitam secara manual lalu tekan "Sesuai".');
+        }
+      } catch (ocrErr: any) {
+        setOcrConfidence(0.3);
+        setErrorMessage(`${ocrErr.message}. Ketik angka hitam secara manual lalu tekan "Sesuai".`);
+      }
+    } catch (err: any) {
+      console.error('Error saat memproses foto:', err);
       setErrorMessage(`Gagal memproses foto: ${err.message}`);
     } finally {
       setIsProcessingOcr(false);
@@ -322,8 +329,9 @@ export const WorkerPage: React.FC = () => {
   const isAngkaMundur = isValidNumber && parsedAngkaSekarang < angkaSebelumnya;
   const isConfidenceRendah = !isManualVerified && ocrConfidence < 0.7;
   const isLonjakanTinggi = customerAvgUsage > 0 && pemakaianM3 > 3 * customerAvgUsage;
+  const isUnitBaru = !!selectedCustomer?.needsReview;
 
-  const hasAnomaly = isAngkaMundur || isConfidenceRendah || isLonjakanTinggi;
+  const hasAnomaly = isAngkaMundur || isConfidenceRendah || isLonjakanTinggi || isUnitBaru;
 
   // -------------------------------------------------------------
   // 5. Simpan Catatan ke Firebase
@@ -365,67 +373,46 @@ export const WorkerPage: React.FC = () => {
         }
       }
 
-      // Hitung estimasi tagihan bertingkat PDAM Wimala
-      let calculatedTagihan = 0;
-      if (pemakaianM3 <= 10) {
-        calculatedTagihan = pemakaianM3 * 2700;
-      } else if (pemakaianM3 <= 20) {
-        calculatedTagihan = 10 * 2700 + (pemakaianM3 - 10) * 5400;
-      } else if (pemakaianM3 <= 30) {
-        calculatedTagihan = 10 * 2700 + 10 * 5400 + (pemakaianM3 - 20) * 10800;
-      } else {
-        calculatedTagihan = 10 * 2700 + 10 * 5400 + 10 * 10800 + (pemakaianM3 - 30) * 21600;
-      }
+      // Hitung tagihan bertingkat memakai tarif Firestore (yang diatur admin)
+      const totalBiaya = hitungBiaya(pemakaianM3, tariffs);
 
       const readingId = `${selectedCustomer.id}_${currentPeriode}`;
-      const anomalyReason = isAngkaMundur
-        ? `Angka baru (${parsedAngkaSekarang}) lebih kecil dari angka sebelumnya (${angkaSebelumnya})`
-        : isLonjakanTinggi
-        ? `Lonjakan pemakaian tinggi (${pemakaianM3} m3 vs rata-rata ${customerAvgUsage.toFixed(1)} m3)`
-        : isConfidenceRendah
-        ? `Kualitas OCR rendah (${Math.round(ocrConfidence * 100)}%)`
-        : null;
+      const catatan: string[] = [];
+      if (isAngkaMundur) catatan.push(`Angka baru (${parsedAngkaSekarang}) lebih kecil dari angka sebelumnya (${angkaSebelumnya})`);
+      if (isLonjakanTinggi) catatan.push(`Lonjakan pemakaian tinggi (${pemakaianM3} m3 vs rata-rata ${customerAvgUsage.toFixed(1)} m3)`);
+      if (isConfidenceRendah) catatan.push(`Pembacaan foto kurang jelas (${Math.round(ocrConfidence * 100)}%), belum dikonfirmasi petugas`);
+      if (isUnitBaru) catatan.push('Unit baru ditambahkan petugas dari stiker, data rumah perlu disesuaikan admin');
 
-      // Simpan langsung ke Firestore (kecepatan tinggi <0.5 detik, anti-stuck!)
+      const petugasNama = profile?.nama || user?.email || 'Petugas Lapangan';
+
+      // Skema HARUS sama dengan ReadingRecord yang dibaca halaman admin
       await setDoc(doc(db, 'readings', readingId), {
         id: readingId,
         customerId: selectedCustomer.id,
         blok: selectedCustomer.blok,
         namaPemilik: selectedCustomer.namaPemilik,
+        nomorMeteran: selectedCustomer.nomorMeteran || '',
         periode: currentPeriode,
         angkaSebelumnya: angkaSebelumnya,
         angkaSekarang: parsedAngkaSekarang,
         pemakaianM3: pemakaianM3,
-        totalTagihan: calculatedTagihan,
+        totalBiaya: totalBiaya,
         fotoUrl: finalFotoUrl,
         ocrConfidence: ocrConfidence,
-        statusVerifikasi: hasAnomaly ? 'perlu_cek' : 'valid',
-        catatanAnomali: anomalyReason,
-        petugasId: user?.uid || 'petugas',
-        petugasNama: profile?.nama || user?.email || 'Petugas Lapangan',
-        dicatatOlehUid: user?.uid || 'petugas',
+        status: hasAnomaly ? 'perlu_cek' : 'normal',
+        catatanAnomali: catatan.length > 0 ? catatan.join('; ') : null,
+        dicatatOleh: petugasNama,
+        dicatatOlehUid: user?.uid || '',
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       }, { merge: true });
 
-      // Update catatan terakhir di master pelanggan
-      await updateDoc(doc(db, 'customers', selectedCustomer.id), {
-        lastReading: parsedAngkaSekarang,
-        lastPeriode: currentPeriode,
-        updatedAt: serverTimestamp(),
-      }).catch(() => {});
-
       setSuccessNotice(`Catatan meteran ${selectedCustomer.blok} berhasil disimpan.`);
-      
-      // Reset form dan kembali ke kamera QR untuk unit selanjutnya
+
+      // Kembali ke awal untuk unit selanjutnya
       setTimeout(() => {
-        setSelectedCustomer(null);
-        setExistingReading(null);
-        setCapturedPhoto(null);
-        setPhotoBlob(null);
-        setAngkaSekarangInput('');
+        resetToStart();
         setSuccessNotice(null);
-        setActiveStep('scan_qr');
       }, 1200);
 
     } catch (err: any) {
@@ -445,19 +432,24 @@ export const WorkerPage: React.FC = () => {
     setActiveStep('history');
 
     try {
-      // Query readings dicatat oleh worker pada periode ini
+      // Query sederhana (tanpa orderBy) agar tidak butuh composite index; urut & filter hari ini di client
       const q = query(
         collection(db, 'readings'),
         where('dicatatOlehUid', '==', user.uid),
-        where('periode', '==', currentPeriode),
-        orderBy('createdAt', 'desc'),
-        limit(50)
+        where('periode', '==', currentPeriode)
       );
 
       const snap = await getDocs(q);
+      const today = new Date().toDateString();
       const items: ReadingRecord[] = [];
-      snap.forEach(d => items.push({ id: d.id, ...d.data() } as ReadingRecord));
-      setTodayReadings(items);
+      snap.forEach((d) => items.push({ id: d.id, ...d.data() } as ReadingRecord));
+
+      const toMs = (r: any) => (r.createdAt?.toMillis ? r.createdAt.toMillis() : Date.now());
+      const todayItems = items
+        .filter((r: any) => !r.createdAt?.toDate || r.createdAt.toDate().toDateString() === today)
+        .sort((a, b) => toMs(b) - toMs(a))
+        .slice(0, 50);
+      setTodayReadings(todayItems);
     } catch (e: any) {
       console.warn('Gagal memuat riwayat:', e);
     } finally {
@@ -541,54 +533,72 @@ export const WorkerPage: React.FC = () => {
         )}
 
         {/* ============================================================ */}
-        {/* STEP 1: SCAN QR CODE KAVLING */}
+        {/* STEP 1: FOTO METERAN + STIKER (1 FOTO, AI BACA BLOK & ANGKA) */}
         {/* ============================================================ */}
         {activeStep === 'scan_qr' && (
           <div className="space-y-4">
-            <div className="bg-slate-950 border border-slate-800 rounded-lg p-3">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-bold text-teal-400 flex items-center gap-1.5 uppercase tracking-wide">
-                  <QrCode className="w-4 h-4" />
-                  Arahkan ke QR Boks Meter
-                </span>
-                <span className="text-[10px] text-slate-400 font-semibold">1/3 Scan Unit</span>
-              </div>
+            <div className="bg-slate-950 border border-slate-800 rounded-lg p-3 space-y-3">
+              <span className="text-xs font-bold text-teal-400 flex items-center gap-1.5 uppercase tracking-wide">
+                <Camera className="w-4 h-4" />
+                Foto Meteran + Stiker Blok
+              </span>
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                Foto <strong className="text-slate-200">sekali saja</strong>: pastikan <strong className="text-slate-200">angka meteran</strong> dan{' '}
+                <strong className="text-slate-200">stiker / tulisan blok</strong> di tutup boks sama-sama terlihat. AI akan membaca blok dan angkanya.
+              </p>
 
-              {/* Viewfinder Scanner */}
-              <div className="relative rounded overflow-hidden bg-black aspect-square flex items-center justify-center border-2 border-dashed border-teal-500/60">
-                <div id={qrRegionId} className="w-full h-full" />
-                {!isScannerRunning && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center bg-slate-950/80">
-                    <QrCode className="w-10 h-10 text-slate-500 mb-2" />
-                    <span className="text-xs text-slate-400 mb-2">Kamera scanner belum aktif atau HTTPS diperlukan.</span>
-                    <button
-                      onClick={() => window.location.reload()}
-                      className="px-3 py-1.5 bg-teal-700 text-white rounded text-xs font-bold"
-                    >
-                      Muat Ulang Kamera
-                    </button>
-                  </div>
+              {capturedPhoto && !isProcessingOcr && (
+                <div className="rounded overflow-hidden bg-black aspect-video flex items-center justify-center border border-slate-700">
+                  <img src={capturedPhoto} alt="Foto meteran" className="w-full h-full object-contain" />
+                </div>
+              )}
+
+              <label
+                className={`w-full py-5 rounded-lg font-black text-sm uppercase tracking-wide flex items-center justify-center gap-2 shadow-lg ${
+                  isProcessingOcr
+                    ? 'bg-slate-700 text-slate-300 cursor-wait'
+                    : 'bg-teal-600 hover:bg-teal-500 active:bg-teal-700 text-white cursor-pointer'
+                }`}
+              >
+                {isProcessingOcr ? (
+                  <>
+                    <RefreshCw className="w-5 h-5 animate-spin" />
+                    <span>AI membaca foto...</span>
+                  </>
+                ) : (
+                  <>
+                    <Camera className="w-6 h-6" />
+                    <span>{capturedPhoto ? 'Foto Ulang' : 'Buka Kamera & Foto'}</span>
+                  </>
                 )}
-              </div>
+                <input
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  disabled={isProcessingOcr}
+                  onChange={handleStartPhoto}
+                  className="hidden"
+                />
+              </label>
             </div>
 
-            {/* Input Manual / Fallback */}
+            {/* Input Manual Blok (jika stiker tidak terbaca) */}
             <div className="bg-slate-950 border border-slate-800 rounded-lg p-3 space-y-2">
               <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wide block">
-                Atau Ketik Kode / Blok Rumah:
+                {capturedPhoto ? 'Stiker tidak terbaca? Ketik blok rumah:' : 'Atau ketik blok rumah:'}
               </label>
               <div className="flex gap-2">
                 <input
                   type="text"
-                  placeholder="Contoh: D-01 atau d_01"
+                  placeholder="Contoh: D-15"
                   value={manualCustomerId}
                   onChange={(e) => setManualCustomerId(e.target.value)}
-                  className="flex-1 px-3 py-2 text-sm font-bold bg-slate-900 border border-slate-700 rounded text-white focus:outline-none focus:border-teal-500"
+                  className="flex-1 px-3 py-2 text-sm font-bold bg-slate-900 border border-slate-700 rounded text-white uppercase focus:outline-none focus:border-teal-500"
                 />
                 <button
                   onClick={() => {
                     if (manualCustomerId.trim()) {
-                      handleQrDetected(manualCustomerId.trim());
+                      handleCariBlok(manualCustomerId.trim(), !!capturedPhoto, lastOcr);
                     }
                   }}
                   className="px-4 py-2 bg-teal-600 hover:bg-teal-500 active:bg-teal-700 text-white text-xs font-bold rounded flex items-center gap-1"
@@ -598,6 +608,96 @@ export const WorkerPage: React.FC = () => {
                 </button>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* ============================================================ */}
+        {/* STEP 1B: RUMAH BELUM TERDAFTAR -> TAMBAH OTOMATIS */}
+        {/* ============================================================ */}
+        {activeStep === 'unit_baru' && (
+          <div className="space-y-3 pb-6">
+            <div className="bg-amber-950/70 border border-amber-500 rounded-lg p-3 space-y-1">
+              <div className="flex items-center gap-1.5 text-amber-300 font-bold text-sm">
+                <UserPlus className="w-4 h-4 flex-shrink-0" />
+                <span>Rumah belum terdaftar</span>
+              </div>
+              <p className="text-[11px] text-amber-100/90 leading-relaxed">
+                Stiker terbaca tetapi unit ini belum ada di data. Cek isian di bawah, lalu tambahkan. Admin akan menyesuaikan datanya nanti.
+              </p>
+            </div>
+
+            {capturedPhoto && (
+              <div className="rounded overflow-hidden bg-black aspect-video flex items-center justify-center border border-slate-700">
+                <img src={capturedPhoto} alt="Foto meteran" className="w-full h-full object-contain" />
+              </div>
+            )}
+
+            <div className="bg-slate-950 border border-slate-700 rounded-lg p-3 space-y-3">
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Cluster</label>
+                  <input
+                    type="text"
+                    placeholder="Kamala"
+                    value={newUnit.cluster}
+                    onChange={(e) => setNewUnit({ ...newUnit, cluster: e.target.value })}
+                    className="w-full px-3 py-2 text-sm font-bold bg-slate-900 border border-slate-700 rounded text-white focus:outline-none focus:border-teal-500"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Blok / No. Rumah</label>
+                  <input
+                    type="text"
+                    placeholder="D-15"
+                    value={newUnit.blok}
+                    onChange={(e) => setNewUnit({ ...newUnit, blok: e.target.value.toUpperCase() })}
+                    className="w-full px-3 py-2 text-sm font-mono font-black bg-slate-900 border border-slate-700 rounded text-white focus:outline-none focus:border-teal-500"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Nama Pengguna (boleh dikosongkan)</label>
+                <input
+                  type="text"
+                  placeholder="Nama penghuni"
+                  value={newUnit.nama}
+                  onChange={(e) => setNewUnit({ ...newUnit, nama: e.target.value })}
+                  className="w-full px-3 py-2 text-sm font-bold bg-slate-900 border border-slate-700 rounded text-white focus:outline-none focus:border-teal-500"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Angka meter saat ini (jadi stand awal, m³)</label>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  placeholder="Angka hitam meteran"
+                  value={newUnit.angkaAwal}
+                  onChange={(e) => setNewUnit({ ...newUnit, angkaAwal: e.target.value })}
+                  className="w-full px-3 py-2 text-lg font-mono font-black bg-slate-900 border-2 border-teal-500 rounded text-white focus:outline-none focus:ring-2 focus:ring-teal-400"
+                />
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleBuatUnitBaru}
+              disabled={isSavingUnit || !newUnit.blok.trim()}
+              className={`w-full py-4 rounded-lg font-black text-sm uppercase tracking-wide flex items-center justify-center gap-2 ${
+                isSavingUnit || !newUnit.blok.trim()
+                  ? 'bg-slate-700 text-slate-400 cursor-not-allowed'
+                  : 'bg-teal-500 hover:bg-teal-400 active:bg-teal-600 text-slate-950'
+              }`}
+            >
+              <UserPlus className="w-5 h-5" />
+              <span>{isSavingUnit ? 'Menambahkan...' : 'Tambahkan & Lanjut Catat'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={resetToStart}
+              className="w-full py-2.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold"
+            >
+              Batal
+            </button>
           </div>
         )}
 
@@ -619,6 +719,9 @@ export const WorkerPage: React.FC = () => {
                   <p className="text-xs text-slate-300 font-semibold mt-0.5">
                     {selectedCustomer.namaPemilik}
                   </p>
+                  {selectedCustomer.cluster && (
+                    <p className="text-[11px] text-slate-400 font-semibold">Cluster {selectedCustomer.cluster}</p>
+                  )}
                 </div>
                 <div className="text-right">
                   <span className="text-[10px] text-slate-400 block font-mono">No. Meteran</span>
@@ -791,6 +894,11 @@ export const WorkerPage: React.FC = () => {
                     • Kualitas foto buram / belum diverifikasi petugas. Klik tombol "Sesuai" atau edit angka untuk konfirmasi.
                   </p>
                 )}
+                {isUnitBaru && (
+                  <p className="font-normal text-rose-200">
+                    • Unit ini baru ditambahkan dari stiker. Admin akan menyesuaikan data rumahnya.
+                  </p>
+                )}
                 {isLonjakanTinggi && (
                   <p className="font-normal text-rose-200">
                     • Pemakaian ({pemakaianM3} m³) melonjak lebih dari 3x rata-rata ({Math.round(customerAvgUsage)} m³).
@@ -823,10 +931,7 @@ export const WorkerPage: React.FC = () => {
 
               <button
                 type="button"
-                onClick={() => {
-                  setSelectedCustomer(null);
-                  setActiveStep('scan_qr');
-                }}
+                onClick={resetToStart}
                 className="w-full py-2.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold"
               >
                 Batal / Ganti Unit
@@ -899,18 +1004,15 @@ export const WorkerPage: React.FC = () => {
       {/* Bottom Navigation (Khusus Worker di HP) */}
       <nav className="bg-slate-950 border-t border-slate-800 grid grid-cols-2 p-1">
         <button
-          onClick={() => {
-            setActiveStep('scan_qr');
-            setSelectedCustomer(null);
-          }}
+          onClick={resetToStart}
           className={`py-3 flex flex-col items-center justify-center gap-1 font-bold text-xs ${
-            activeStep === 'scan_qr' || activeStep === 'form_meter'
+            activeStep === 'scan_qr' || activeStep === 'unit_baru' || activeStep === 'form_meter'
               ? 'text-teal-400 border-b-2 border-teal-400'
               : 'text-slate-400'
           }`}
         >
           <Camera className="w-5 h-5" />
-          <span>Scan Meteran</span>
+          <span>Foto Meteran</span>
         </button>
         <button
           onClick={loadTodayHistory}

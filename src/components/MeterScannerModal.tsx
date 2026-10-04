@@ -146,7 +146,7 @@ export const MeterScannerModal: React.FC<MeterScannerModalProps> = ({
 
       const preprocessed = preprocessMeterImage(img, cropX, cropY, cropW, cropH);
 
-      const ocrResult = await recognizeMeterNumber(preprocessed.dataUrl, (p) => {
+      const ocrResult = await recognizeMeterNumber(preprocessed.dataUrl, (p: number) => {
         setOcrProgress(Math.max(10, p));
       });
 

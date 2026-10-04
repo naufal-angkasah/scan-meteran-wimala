@@ -1,9 +1,41 @@
-import { createWorker } from 'tesseract.js';
+import { auth } from './firebase';
+
+export interface OcrFoto {
+  angka: number | null;
+  confidence: number;
+  cluster: string | null;
+  blok: string | null;
+  pengguna: string | null;
+  catatan?: string;
+}
 
 /**
- * Pre-processes an image on an HTML5 canvas to optimize OCR for water meter counters.
- * Increases contrast, applies adaptive grayscale and thresholding to make numbers crisp.
+ * Kirim foto (meteran + stiker) ke Vercel serverless /api/baca-meteran.
+ * API key Gemini disimpan di server (env GEMINI_API_KEY), tidak pernah ada di browser.
  */
+export async function bacaFotoMeteran(fotoBase64: string): Promise<OcrFoto> {
+  const token = await auth.currentUser?.getIdToken();
+  const res = await fetch('/api/baca-meteran', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ fotoBase64, mimeType: 'image/jpeg' }),
+  });
+
+  let data: any = {};
+  try {
+    data = await res.json();
+  } catch {
+    /* respons bukan JSON */
+  }
+  if (!res.ok) {
+    throw new Error(data?.error || `Pembacaan foto gagal (HTTP ${res.status})`);
+  }
+  return data as OcrFoto;
+}
+
 export const preprocessMeterImage = (
   imageSource: CanvasImageSource,
   sourceX: number,
@@ -16,91 +48,28 @@ export const preprocessMeterImage = (
   const targetHeight = Math.max(100, sourceHeight);
   canvas.width = targetWidth;
   canvas.height = targetHeight;
-
   const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('Cannot get canvas 2d context');
-
-  // Draw the cropped region
-  ctx.drawImage(
-    imageSource,
-    sourceX,
-    sourceY,
-    sourceWidth,
-    sourceHeight,
-    0,
-    0,
-    targetWidth,
-    targetHeight
-  );
-
-  const imgData = ctx.getImageData(0, 0, targetWidth, targetHeight);
-  const d = imgData.data;
-
-  // 1. Grayscale & contrast enhancement
-  for (let i = 0; i < d.length; i += 4) {
-    // Luminance
-    const gray = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-    
-    // High contrast curve
-    const contrast = 1.4;
-    const factor = (259 * (contrast + 255)) / (255 * (259 - contrast));
-    const highContrast = factor * (gray - 128) + 128;
-
-    // Thresholding
-    const val = highContrast > 135 ? 255 : 0;
-
-    d[i] = val;     // R
-    d[i + 1] = val; // G
-    d[i + 2] = val; // B
+  if (ctx) {
+    ctx.drawImage(imageSource, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, targetWidth, targetHeight);
   }
-
-  ctx.putImageData(imgData, 0, 0);
-
   return {
     dataUrl: canvas.toDataURL('image/jpeg', 0.9),
     canvas,
   };
 };
 
-/**
- * Recognizes digits from an image / base64 using Tesseract.js
- */
 export const recognizeMeterNumber = async (
   imageDataUrl: string,
-  onProgress?: (progress: number, status: string) => void
+  _onProgress?: (progress: number, status?: string) => void
 ): Promise<{ text: string; confidence: number; detectedNumber: number | null }> => {
   try {
-    const worker = await createWorker('eng', 1, {
-      logger: m => {
-        if (m.status === 'recognizing text' && onProgress) {
-          onProgress(Math.round((m.progress || 0) * 100), m.status);
-        }
-      }
-    });
-
-    // Whitelist only digits and comma/dot
-    await worker.setParameters({
-      tessedit_char_whitelist: '0123456789.,',
-      tessedit_pageseg_mode: '7' as any, // Treat the image as a single text line
-    });
-
-    const ret = await worker.recognize(imageDataUrl);
-    await worker.terminate();
-
-    const rawText = ret.data.text.trim();
-    const confidence = ret.data.confidence;
-
-    // Clean numbers
-    const cleanDigits = rawText.replace(/[^0-9]/g, '');
-    const detectedNumber = cleanDigits.length > 0 ? parseInt(cleanDigits, 10) : null;
-
+    const res = await bacaFotoMeteran(imageDataUrl);
     return {
-      text: rawText,
-      confidence,
-      detectedNumber,
+      text: res.angka !== null ? String(res.angka) : '',
+      confidence: res.confidence,
+      detectedNumber: res.angka,
     };
-  } catch (error) {
-    console.warn('Tesseract OCR error:', error);
+  } catch {
     return {
       text: '',
       confidence: 0,

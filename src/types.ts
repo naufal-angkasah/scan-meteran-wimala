@@ -4,9 +4,14 @@ export interface Customer {
   id: string;
   namaPemilik: string;
   blok: string;
+  cluster?: string;
   nomorMeteran: string;
   angkaAwal: number;
   statusRumah?: StatusRumah;
+  /** true = ditambahkan otomatis oleh petugas dari stiker, perlu disesuaikan admin */
+  needsReview?: boolean;
+  sumber?: 'admin' | 'worker' | 'import';
+  dibuatOleh?: string;
   createdAt?: any;
 }
 

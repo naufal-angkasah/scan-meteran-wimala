@@ -27,7 +27,6 @@ import {
   Building,
   UserCheck
 } from 'lucide-react';
-import { QRCodeSVG } from 'qrcode.react';
 import * as XLSX from 'xlsx';
 import { 
   collection, 
@@ -43,6 +42,7 @@ import {
 } from 'firebase/firestore';
 import { db, callBuatWorker, callNonaktifkanWorker, callResetPasswordWorker } from '../lib/firebase';
 import { useAuth, UserProfile } from '../context/AuthContext';
+import { normalizeBlok, blokToId } from '../lib/blok';
 import { Customer, Tariff, ReadingRecord, StatusRumah, ReadingStatus } from '../types';
 
 type AdminTab = 'pelanggan' | 'pencatatan' | 'tarif' | 'cetak_qr' | 'worker';
@@ -92,7 +92,16 @@ export const AdminPage: React.FC = () => {
       // 3. Load Readings for active period
       const readSnap = await getDocs(query(collection(db, 'readings'), where('periode', '==', selectedPeriode)));
       const readList: ReadingRecord[] = [];
-      readSnap.forEach((d) => readList.push({ id: d.id, ...d.data() } as ReadingRecord));
+      readSnap.forEach((d) => {
+        const x: any = d.data();
+        readList.push({
+          id: d.id,
+          ...x,
+          totalBiaya: x.totalBiaya ?? x.totalTagihan ?? 0,
+          status: x.status ?? x.statusVerifikasi ?? 'normal',
+          dicatatOleh: x.dicatatOleh ?? x.petugasNama ?? '',
+        } as ReadingRecord);
+      });
       setReadings(readList);
 
       // 4. Load Workers
@@ -118,7 +127,9 @@ export const AdminPage: React.FC = () => {
   const [custSearch, setCustSearch] = useState('');
   const [isCustModalOpen, setIsCustModalOpen] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
+  const [onlyReview, setOnlyReview] = useState(false);
   const [custForm, setCustForm] = useState({
+    cluster: '',
     blok: '',
     namaPemilik: '',
     nomorMeteran: '',
@@ -128,13 +139,14 @@ export const AdminPage: React.FC = () => {
 
   const handleOpenAddCustomer = () => {
     setEditingCustomer(null);
-    setCustForm({ blok: '', namaPemilik: '', nomorMeteran: '', angkaAwal: 0, statusRumah: 'terhuni' });
+    setCustForm({ cluster: '', blok: '', namaPemilik: '', nomorMeteran: '', angkaAwal: 0, statusRumah: 'terhuni' });
     setIsCustModalOpen(true);
   };
 
   const handleOpenEditCustomer = (c: Customer) => {
     setEditingCustomer(c);
     setCustForm({
+      cluster: c.cluster || '',
       blok: c.blok,
       namaPemilik: c.namaPemilik,
       nomorMeteran: c.nomorMeteran || '',
@@ -152,12 +164,20 @@ export const AdminPage: React.FC = () => {
     }
 
     try {
-      const cleanId = custForm.blok.toLowerCase().replace(/[^a-z0-9]/g, '_');
+      const blokBersih = normalizeBlok(custForm.blok);
+      const cleanId = blokToId(blokBersih);
       const targetId = editingCustomer ? editingCustomer.id : cleanId;
+      if (!editingCustomer && customers.some((c) => c.id === cleanId)) {
+        alert(`Blok ${blokBersih} sudah ada. Edit data yang ada saja.`);
+        return;
+      }
 
       await setDoc(doc(db, 'customers', targetId), {
         id: targetId,
-        blok: custForm.blok.trim().toUpperCase(),
+        cluster: custForm.cluster.trim(),
+        blok: blokBersih,
+        needsReview: false,
+        sumber: editingCustomer?.sumber || 'admin',
         namaPemilik: custForm.namaPemilik.trim(),
         nomorMeteran: custForm.nomorMeteran.trim(),
         angkaAwal: Number(custForm.angkaAwal) || 0,
@@ -186,12 +206,21 @@ export const AdminPage: React.FC = () => {
     }
   };
 
+  const handleTandaiSesuai = async (c: Customer) => {
+    try {
+      await updateDoc(doc(db, 'customers', c.id), { needsReview: false, updatedAt: serverTimestamp() });
+      loadAllData();
+    } catch (err: any) {
+      alert(`Gagal: ${err.message}`);
+    }
+  };
+
   // Unduh Template Excel Pelanggan
   const handleDownloadTemplate = () => {
     const templateRows = [
-      { 'Blok': 'D-01', 'Nama Pemilik': 'Budi Santoso', 'Nomor Meteran': 'WM-001', 'Angka Awal': 142, 'Status Rumah': 'terhuni' },
-      { 'Blok': 'D-02', 'Nama Pemilik': 'Siti Rahmawati', 'Nomor Meteran': 'WM-002', 'Angka Awal': 198, 'Status Rumah': 'renovasi' },
-      { 'Blok': 'A-21', 'Nama Pemilik': 'Ahmad Fauzan', 'Nomor Meteran': 'WM-003', 'Angka Awal': 0, 'Status Rumah': 'booking' },
+      { 'Cluster': 'Kamala', 'Blok': 'D-01', 'Nama Pemilik': 'Budi Santoso', 'Nomor Meteran': 'WM-001', 'Angka Awal': 142, 'Status Rumah': 'terhuni' },
+      { 'Cluster': 'Kamala', 'Blok': 'D-02', 'Nama Pemilik': 'Siti Rahmawati', 'Nomor Meteran': 'WM-002', 'Angka Awal': 198, 'Status Rumah': 'renovasi' },
+      { 'Cluster': 'Kamala', 'Blok': 'A-21', 'Nama Pemilik': 'Ahmad Fauzan', 'Nomor Meteran': 'WM-003', 'Angka Awal': 0, 'Status Rumah': 'booking' },
     ];
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.json_to_sheet(templateRows);
@@ -220,11 +249,12 @@ export const AdminPage: React.FC = () => {
 
         let count = 0;
         for (const row of rows) {
-          const blok = String(row['Blok'] || row['blok'] || '').trim().toUpperCase();
+          const blok = normalizeBlok(String(row['Blok'] || row['blok'] || ''));
+          const cluster = String(row['Cluster'] || row['cluster'] || '').trim();
           const nama = String(row['Nama Pemilik'] || row['namaPemilik'] || row['Nama'] || '').trim();
           if (!blok || !nama) continue;
 
-          const cleanId = blok.toLowerCase().replace(/[^a-z0-9]/g, '_');
+          const cleanId = blokToId(blok);
           const noMeter = String(row['Nomor Meteran'] || row['nomorMeteran'] || '').trim();
           const angkaAwal = Number(row['Angka Awal'] || row['angkaAwal'] || 0);
           const stRaw = String(row['Status Rumah'] || row['statusRumah'] || 'terhuni').toLowerCase();
@@ -233,7 +263,9 @@ export const AdminPage: React.FC = () => {
 
           await setDoc(doc(db, 'customers', cleanId), {
             id: cleanId,
+            cluster,
             blok,
+            needsReview: false,
             namaPemilik: nama,
             nomorMeteran: noMeter,
             angkaAwal,
@@ -255,11 +287,13 @@ export const AdminPage: React.FC = () => {
 
   const filteredCustomers = useMemo(() => {
     return customers.filter((c) => {
+      if (onlyReview && !c.needsReview) return false;
       if (!custSearch.trim()) return true;
       const q = custSearch.toLowerCase();
-      return c.blok.toLowerCase().includes(q) || c.namaPemilik.toLowerCase().includes(q);
+      return c.blok.toLowerCase().includes(q) || c.namaPemilik.toLowerCase().includes(q) || (c.cluster || '').toLowerCase().includes(q);
     });
-  }, [customers, custSearch]);
+  }, [customers, custSearch, onlyReview]);
+  const reviewCount = useMemo(() => customers.filter((c) => c.needsReview).length, [customers]);
 
   // -------------------------------------------------------------
   // TAB 2: DATA PENCATATAN (TABEL, FILTER, EDIT ANGKA, TANDAI VALID)
@@ -348,21 +382,25 @@ export const AdminPage: React.FC = () => {
       return;
     }
 
-    const exportRows = filteredReadings.map((r, i) => ({
-      'No': i + 1,
-      'Periode': r.periode,
-      'Blok': r.blok,
-      'Nama Pemilik': r.namaPemilik,
-      'No. Meteran': r.nomorMeteran || '-',
-      'Angka Awal': r.angkaSebelumnya,
-      'Angka Akhir': r.angkaSekarang,
-      'Pemakaian (m³)': r.pemakaianM3,
-      'Total Tagihan (Rp)': r.totalBiaya,
-      'Status': r.status === 'valid' ? 'Valid' : r.status === 'perlu_cek' ? 'Perlu Cek' : 'Normal',
-      'Catatan Anomali': r.catatanAnomali || '-',
-      'Petugas': r.dicatatOleh,
-      'Tanggal Catat': r.createdAt ? new Date(r.createdAt.toDate ? r.createdAt.toDate() : r.createdAt).toLocaleString('id-ID') : '-',
-    }));
+    const exportRows = filteredReadings.map((r, i) => {
+      const cust = customers.find((c) => c.id === r.customerId || c.blok === r.blok);
+      return {
+        'No': i + 1,
+        'Periode': r.periode,
+        'Cluster': cust?.cluster || '-',
+        'Blok': r.blok,
+        'Nama Pemilik': r.namaPemilik,
+        'No. Meteran': r.nomorMeteran || '-',
+        'Angka Awal': r.angkaSebelumnya,
+        'Angka Akhir': r.angkaSekarang,
+        'Pemakaian (m³)': r.pemakaianM3,
+        'Total Tagihan (Rp)': r.totalBiaya,
+        'Status': r.status === 'valid' ? 'Valid' : r.status === 'perlu_cek' ? 'Perlu Cek' : 'Normal',
+        'Catatan Anomali': r.catatanAnomali || '-',
+        'Petugas': r.dicatatOleh,
+        'Tanggal Catat': r.createdAt ? new Date(r.createdAt.toDate ? r.createdAt.toDate() : r.createdAt).toLocaleString('id-ID') : '-',
+      };
+    });
 
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.json_to_sheet(exportRows);
@@ -619,7 +657,7 @@ export const AdminPage: React.FC = () => {
           }`}
         >
           <Printer className="w-4 h-4" />
-          <span>Cetak Stiker QR</span>
+          <span>Cetak Stiker</span>
         </button>
 
         <button
@@ -706,6 +744,17 @@ export const AdminPage: React.FC = () => {
                 </button>
 
                 <button
+                  onClick={() => setOnlyReview(!onlyReview)}
+                  title="Unit yang ditambahkan otomatis oleh petugas"
+                  className={`px-3 py-1.5 border rounded text-xs font-bold flex items-center gap-1 ${
+                    onlyReview ? 'bg-amber-500 text-white border-amber-600' : 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100'
+                  }`}
+                >
+                  <AlertTriangle className="w-3.5 h-3.5" />
+                  <span>Perlu Disesuaikan ({reviewCount})</span>
+                </button>
+
+                <button
                   onClick={handleOpenAddCustomer}
                   className="px-3 py-1.5 bg-teal-700 hover:bg-teal-800 text-white rounded text-xs font-bold flex items-center gap-1"
                 >
@@ -721,6 +770,7 @@ export const AdminPage: React.FC = () => {
                 <thead className="bg-slate-100 border-b border-slate-200 text-slate-700 font-bold uppercase tracking-wider text-[11px]">
                   <tr>
                     <th className="p-2.5">No</th>
+                    <th className="p-2.5">Cluster</th>
                     <th className="p-2.5">Blok</th>
                     <th className="p-2.5">Nama Pemilik</th>
                     <th className="p-2.5">No. Meteran</th>
@@ -732,7 +782,7 @@ export const AdminPage: React.FC = () => {
                 <tbody className="divide-y divide-slate-200 text-slate-800">
                   {filteredCustomers.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="p-6 text-center text-slate-400">
+                      <td colSpan={8} className="p-6 text-center text-slate-400">
                         Tidak ada data pelanggan yang sesuai.
                       </td>
                     </tr>
@@ -740,8 +790,16 @@ export const AdminPage: React.FC = () => {
                     filteredCustomers.map((c, idx) => (
                       <tr key={c.id} className="hover:bg-slate-50">
                         <td className="p-2.5 text-slate-400 font-mono">{idx + 1}</td>
+                        <td className="p-2.5 text-slate-600">{c.cluster || '-'}</td>
                         <td className="p-2.5 font-bold font-mono text-teal-800">{c.blok}</td>
-                        <td className="p-2.5 font-semibold text-slate-900">{c.namaPemilik}</td>
+                        <td className="p-2.5 font-semibold text-slate-900">
+                          {c.namaPemilik}
+                          {c.needsReview && (
+                            <span className="ml-2 text-[10px] font-bold px-1.5 py-0.5 rounded border bg-amber-50 text-amber-800 border-amber-300 uppercase">
+                              Dari petugas, cek data
+                            </span>
+                          )}
+                        </td>
                         <td className="p-2.5 font-mono text-slate-600">{c.nomorMeteran || '-'}</td>
                         <td className="p-2.5 text-right font-mono font-bold text-slate-700">
                           {c.angkaAwal || 0} m³
@@ -764,6 +822,15 @@ export const AdminPage: React.FC = () => {
                           </span>
                         </td>
                         <td className="p-2.5 text-center space-x-1">
+                          {c.needsReview && (
+                            <button
+                              onClick={() => handleTandaiSesuai(c)}
+                              title="Tandai sudah sesuai"
+                              className="p-1 hover:bg-emerald-100 rounded text-emerald-700"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                           <button
                             onClick={() => handleOpenEditCustomer(c)}
                             title="Edit Data"
@@ -901,7 +968,7 @@ export const AdminPage: React.FC = () => {
                           +{r.pemakaianM3} m³
                         </td>
                         <td className="p-2.5 text-right font-mono font-extrabold text-slate-900">
-                          Rp {r.totalBiaya.toLocaleString('id-ID')}
+                          Rp {(r.totalBiaya ?? 0).toLocaleString('id-ID')}
                         </td>
                         <td className="p-2.5 text-center">
                           {r.fotoUrl ? (
@@ -1103,7 +1170,7 @@ export const AdminPage: React.FC = () => {
         )}
 
         {/* ============================================================ */}
-        {/* TAB 4: CETAK STIKER QR (A4 PRINT GRID) */}
+        {/* TAB 4: CETAK STIKER TEKS (A4 PRINT GRID) */}
         {/* ============================================================ */}
         {activeTab === 'cetak_qr' && (
           <div className="space-y-4">
@@ -1134,7 +1201,7 @@ export const AdminPage: React.FC = () => {
             <div className="bg-white border border-slate-300 p-6 rounded print:border-none print:p-0 print:m-0 print:shadow-none">
               <div className="hidden print:block border-b-2 border-slate-900 pb-2 mb-4">
                 <h1 className="text-base font-black uppercase">
-                  WIMALA LAND • LEMBAR STIKER QR BOX METERAN AIR PDAM
+                  WIMALA LAND • LEMBAR STIKER TEKS BOX METERAN AIR PDAM
                 </h1>
                 <p className="text-[10px] text-slate-600">
                   Total {printStickersList.length} Unit • Dicetak pada: {new Date().toLocaleDateString('id-ID')}
@@ -1151,7 +1218,7 @@ export const AdminPage: React.FC = () => {
                     <div
                       key={c.id}
                       onClick={() => toggleSelectCustomer(c.id)}
-                      className={`relative border-2 rounded-lg p-3 flex flex-col items-center justify-between cursor-pointer transition-all print:border-slate-800 print:rounded print:p-2 print:break-inside-avoid ${
+                      className={`relative border-2 rounded-lg p-3 flex flex-col items-start justify-between cursor-pointer transition-all print:border-slate-800 print:rounded print:p-2 print:break-inside-avoid ${
                         isChecked
                           ? 'border-teal-600 bg-teal-50/20'
                           : 'border-slate-200 hover:border-slate-400 bg-white'
@@ -1167,29 +1234,11 @@ export const AdminPage: React.FC = () => {
                         />
                       </div>
 
-                      {/* Header Stiker */}
-                      <div className="w-full text-center border-b border-slate-200 pb-1 mb-1.5">
-                        <span className="text-[10px] font-black tracking-wider text-slate-800 uppercase block">
-                          PDAM WIMALA LAND
-                        </span>
-                      </div>
-
-                      {/* QR Code (Hanya ID Pelanggan) */}
-                      <div className="p-1.5 bg-white border border-slate-200 rounded my-1 shadow-2xs">
-                        <QRCodeSVG value={qrPayload} size={110} level="M" includeMargin={false} />
-                      </div>
-
-                      {/* Label Blok & Nama */}
-                      <div className="text-center w-full mt-1">
-                        <div className="font-mono font-black text-xl tracking-tight text-slate-900 leading-none">
-                          {c.blok}
-                        </div>
-                        <div className="text-xs font-bold text-slate-700 truncate mt-0.5 max-w-[160px]">
-                          {c.namaPemilik}
-                        </div>
-                        <div className="text-[9px] text-slate-400 font-mono mt-0.5">
-                          ID: {c.id}
-                        </div>
+                      {/* Stiker teks (tanpa barcode): Cluster / Blok / Pengguna */}
+                      <div className="w-full text-sm leading-snug text-slate-900 py-2 space-y-0.5">
+                        <div><span className="font-semibold">Cluster</span>: <span className="font-bold">{c.cluster || '-'}</span></div>
+                        <div><span className="font-semibold">Blok</span>: <span className="font-mono font-black text-lg">{c.blok}</span></div>
+                        <div><span className="font-semibold">Pengguna</span>: <span className="font-bold">{c.namaPemilik}</span></div>
                       </div>
                     </div>
                   );
@@ -1421,6 +1470,18 @@ export const AdminPage: React.FC = () => {
               </button>
             </div>
             <form onSubmit={handleSaveCustomer} className="p-4 space-y-3">
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">
+                  Cluster:
+                </label>
+                <input
+                  type="text"
+                  placeholder="Contoh: Kamala"
+                  value={custForm.cluster}
+                  onChange={(e) => setCustForm({ ...custForm, cluster: e.target.value })}
+                  className="w-full text-xs px-3 py-2 border border-slate-300 rounded focus:outline-none focus:border-teal-700"
+                />
+              </div>
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="text-xs font-semibold text-slate-700 block mb-1">

@@ -3,53 +3,64 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Helper functions
+    // Peran dibaca dari dokumen users/{uid} (akun dibuat tanpa custom claims)
     function isAuthenticated() {
       return request.auth != null;
     }
 
+    function roleOf(uid) {
+      return get(/databases/$(database)/documents/users/$(uid)).data.role;
+    }
+
     function isAdmin() {
-      return isAuthenticated() && request.auth.token.role == 'admin';
+      return isAuthenticated() && roleOf(request.auth.uid) == 'admin';
     }
 
     function isWorker() {
-      return isAuthenticated() && request.auth.token.role == 'worker';
+      return isAuthenticated() && roleOf(request.auth.uid) == 'worker';
     }
 
     function isOwner(uid) {
       return isAuthenticated() && request.auth.uid == uid;
     }
 
-    // 1. Koleksi: users
-    // Admin bisa baca & tulis semua. User bisa baca datanya sendiri.
+    // 1. users: admin baca/tulis semua, user baca datanya sendiri
     match /users/{userId} {
       allow read: if isAuthenticated() && (isAdmin() || isOwner(userId));
       allow write: if isAdmin();
     }
 
-    // 2. Koleksi: customers
-    // Admin bisa baca dan tulis (CRUD). Worker hanya bisa baca.
+    // 2. customers: admin CRUD penuh.
+    // Worker boleh membaca dan MEMBUAT unit baru hanya jika ditandai needsReview
+    // (unit dari stiker yang belum ada di database, nanti disesuaikan admin).
     match /customers/{customerId} {
-      allow read: if isAuthenticated() && (isAdmin() || isWorker());
-      allow write: if isAdmin();
-    }
-
-    // 3. Koleksi: tariffs
-    // Admin bisa baca dan tulis. Worker hanya bisa baca.
-    match /tariffs/{tariffId} {
-      allow read: if isAuthenticated() && (isAdmin() || isWorker());
-      allow write: if isAdmin();
-    }
-
-    // 4. Koleksi: readings
-    // Baca: Admin dan Worker (untuk cek riwayat hari ini & data bulan lalu).
-    // Tulis (create/update): HANYA melalui Cloud Function (Admin SDK bypasses security rules).
-    // Admin diizinkan edit manual / update status ke 'valid' atau delete dari dashboard admin.
-    // Worker DILARANG menulis langsung ke koleksi ini.
-    match /readings/{readingId} {
-      allow read: if isAuthenticated() && (isAdmin() || isWorker());
-      allow create: if false; // Harus lewat callable Cloud Function simpanReading
+      allow read: if isAdmin() || isWorker();
+      allow create: if isAdmin() || (
+        isWorker() &&
+        request.resource.data.needsReview == true &&
+        request.resource.data.sumber == 'worker'
+      );
       allow update, delete: if isAdmin();
+    }
+
+    // 3. tariffs: admin tulis, admin & worker baca
+    match /tariffs/{tariffId} {
+      allow read: if isAdmin() || isWorker();
+      allow write: if isAdmin();
+    }
+
+    // 4. readings: worker mencatat langsung (tanpa Cloud Function), hanya atas namanya sendiri.
+    match /readings/{readingId} {
+      allow read: if isAdmin() || isWorker();
+      allow create: if isAdmin() || (
+        isWorker() && request.resource.data.dicatatOlehUid == request.auth.uid
+      );
+      allow update: if isAdmin() || (
+        isWorker() &&
+        resource.data.dicatatOlehUid == request.auth.uid &&
+        request.resource.data.dicatatOlehUid == request.auth.uid
+      );
+      allow delete: if isAdmin();
     }
   }
 }
