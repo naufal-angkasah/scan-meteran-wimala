@@ -246,8 +246,8 @@ export const AdminPage: React.FC = () => {
   // Unduh Template Excel Pelanggan
   const handleDownloadTemplate = () => {
     const templateRows = [
-      { 'Cluster': 'Kamala', 'Blok': 'D-01', 'Nama Pemilik': 'Budi Santoso', 'Nomor Meteran': 'WM-001', 'Angka Awal': 142, 'Status Rumah': 'terhuni' },
-      { 'Cluster': 'Kamala', 'Blok': 'D-02', 'Nama Pemilik': 'Siti Rahmawati', 'Nomor Meteran': 'WM-002', 'Angka Awal': 198, 'Status Rumah': 'renovasi' },
+      { 'Cluster': 'Kamala', 'Blok': 'D-1', 'Nama Pemilik': 'Budi Santoso', 'Nomor Meteran': 'WM-001', 'Angka Awal': 142, 'Status Rumah': 'terhuni' },
+      { 'Cluster': 'Kamala', 'Blok': 'D-2', 'Nama Pemilik': 'Siti Rahmawati', 'Nomor Meteran': 'WM-002', 'Angka Awal': 198, 'Status Rumah': 'renovasi' },
       { 'Cluster': 'Kamala', 'Blok': 'A-21', 'Nama Pemilik': 'Ahmad Fauzan', 'Nomor Meteran': 'WM-003', 'Angka Awal': 0, 'Status Rumah': 'booking' },
     ];
     const wb = XLSX.utils.book_new();
@@ -1610,7 +1610,7 @@ export const AdminPage: React.FC = () => {
                   <input
                     type="text"
                     required
-                    placeholder="Contoh: D-01"
+                    placeholder="Contoh: D-1"
                     value={custForm.blok}
                     onChange={(e) => setCustForm({ ...custForm, blok: e.target.value })}
                     className="w-full text-xs font-mono font-bold px-3 py-2 border border-slate-300 rounded focus:outline-none focus:border-teal-700"

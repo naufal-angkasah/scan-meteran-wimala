@@ -98,24 +98,49 @@ export const WorkerPage: React.FC = () => {
   // -------------------------------------------------------------
   // 1. Cari unit rumah berdasarkan blok (dari stiker / ketik manual)
   const cariCustomerByBlok = async (raw: string): Promise<Customer | null> => {
-    const blok = normalizeBlok(raw);
-    if (!blok) return null;
+    const norm = normalizeBlok(raw);
+    if (!norm) return null;
 
-    // 1. Cari by ID normalized (contoh: d_15)
-    const byId = await getDoc(doc(db, 'customers', blokToId(blok)));
-    if (byId.exists()) return { id: byId.id, ...byId.data() } as Customer;
+    // Kumpulkan semua varian penulisan ID dan Blok (format D-1 maupun D-01)
+    const m = norm.match(/^([A-Z])-(\d+)([A-Z]?)$/);
+    const candidateIds = new Set<string>();
+    const candidateBloks = new Set<string>();
 
-    // 2. Cari by ID raw lowercase
-    const byIdRaw = await getDoc(doc(db, 'customers', raw.trim().toLowerCase()));
-    if (byIdRaw.exists()) return { id: byIdRaw.id, ...byIdRaw.data() } as Customer;
+    candidateIds.add(blokToId(norm)); // contoh: d_1
+    candidateIds.add(norm.toLowerCase().replace(/[^a-z0-9]/g, '_'));
+    candidateIds.add(raw.trim().toLowerCase().replace(/[^a-z0-9]/g, '_'));
 
-    // 3. Query field 'blok' normalized
-    const snap = await getDocs(query(collection(db, 'customers'), where('blok', '==', blok), limit(1)));
-    if (!snap.empty) return { id: snap.docs[0].id, ...snap.docs[0].data() } as Customer;
+    candidateBloks.add(norm); // contoh: D-1
+    candidateBloks.add(raw.trim().toUpperCase());
 
-    // 4. Query field 'blok' raw uppercase
-    const snapRaw = await getDocs(query(collection(db, 'customers'), where('blok', '==', raw.trim().toUpperCase()), limit(1)));
-    if (!snapRaw.empty) return { id: snapRaw.docs[0].id, ...snapRaw.docs[0].data() } as Customer;
+    if (m) {
+      const letter = m[1];
+      const num = parseInt(m[2], 10);
+      const suf = m[3] || '';
+      const paddedNum = String(num).padStart(2, '0'); // "01"
+
+      // Varian dua digit dengan nol (format legacy): d_01, D-01, D01, D1
+      candidateIds.add(`${letter.toLowerCase()}_${paddedNum}${suf.toLowerCase()}`);
+      candidateBloks.add(`${letter}-${paddedNum}${suf}`);
+      candidateBloks.add(`${letter}${num}${suf}`);
+      candidateBloks.add(`${letter}${paddedNum}${suf}`);
+    }
+
+    // 1. Coba pencarian via ID dokumen Firestore
+    for (const cid of candidateIds) {
+      try {
+        const d = await getDoc(doc(db, 'customers', cid));
+        if (d.exists()) return { id: d.id, ...d.data() } as Customer;
+      } catch {}
+    }
+
+    // 2. Coba pencarian via field 'blok'
+    for (const cblk of candidateBloks) {
+      try {
+        const snap = await getDocs(query(collection(db, 'customers'), where('blok', '==', cblk), limit(1)));
+        if (!snap.empty) return { id: snap.docs[0].id, ...snap.docs[0].data() } as Customer;
+      } catch {}
+    }
 
     return null;
   };
@@ -600,7 +625,7 @@ export const WorkerPage: React.FC = () => {
               <div className="flex gap-2">
                 <input
                   type="text"
-                  placeholder="Contoh: D-15 atau Unit 15"
+                  placeholder="Contoh: D-1 atau D-15"
                   value={manualCustomerId}
                   onChange={(e) => setManualCustomerId(e.target.value)}
                   onKeyDown={(e) => {
@@ -663,7 +688,7 @@ export const WorkerPage: React.FC = () => {
                   <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">Blok / No. Rumah</label>
                   <input
                     type="text"
-                    placeholder="D-15"
+                    placeholder="D-1"
                     value={newUnit.blok}
                     onChange={(e) => setNewUnit({ ...newUnit, blok: e.target.value.toUpperCase() })}
                     className="w-full px-3 py-2 text-sm font-mono font-black bg-slate-900 border border-slate-700 rounded text-white focus:outline-none focus:border-teal-500"

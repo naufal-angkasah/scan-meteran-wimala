@@ -19,7 +19,7 @@ ATURAN PENTING PDAM INDONESIA:
 
 2. Dari stiker atau tulisan identitas unit rumah di boks / tutup meteran:
    - "cluster": nama cluster perumahan jika tertulis (contoh: Kamala)
-   - "blok": blok dan nomor unit/rumah/kavling (contoh: D-15, D15, Blok D No 15, Unit D-15, No. 15, dll). Formatkan rapi (misal: D-15).
+   - "blok": blok dan nomor unit/rumah/kavling (contoh: D-1, D-2, D-15, D15, Blok D No 1, Unit D-1, dll). Gunakan format huruf blok dan nomor tanpa nol di depan (contoh: D-1, D-2, bukan D-01).
    - "pengguna": nama pemilik/penghuni jika tertulis
 
 3. "confidence": tingkat kepastian angka hitam (0.0 sampai 1.0).

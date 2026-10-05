@@ -10,17 +10,18 @@ export function normalizeBlok(raw: string | null | undefined): string {
     .replace(/\b(BLOK|BLOCK|UNIT|KAVLING|KAV|RUMAH|NOMOR|NO)\b/g, ' ')
     .replace(/[^A-Z0-9\s-]/g, ' ');
 
-  // 1. Pola: Huruf Blok + Angka Nomor (contoh: D-15, D15, D 15, D12B)
-  const m = sClean.match(/\b([A-Z])\s*-?\s*(\d{1,3})([A-Z])?\b/);
+  // 1. Pola: Huruf Blok + Angka Nomor (contoh: D-1, D1, D-01, D-15, D12B)
+  const m = sClean.match(/\b([A-Z])\s*-?\s*0*(\d{1,3})([A-Z])?\b/);
   if (m) {
-    const num = m[2].length < 2 ? m[2].padStart(2, '0') : m[2];
+    const num = parseInt(m[2], 10);
     return `${m[1]}-${num}${m[3] || ''}`;
   }
 
   // 2. Pola: Hanya nomor unit tanpa huruf blok
-  const mNum = sClean.match(/\b(\d{1,3})([A-Z])?\b/);
+  const mNum = sClean.match(/\b0*(\d{1,3})([A-Z])?\b/);
   if (mNum) {
-    return `${mNum[1]}${mNum[2] || ''}`;
+    const num = parseInt(mNum[1], 10);
+    return `${num}${mNum[2] || ''}`;
   }
 
   return s.replace(/\s+/g, ' ').trim();
